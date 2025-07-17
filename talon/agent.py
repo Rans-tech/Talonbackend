@@ -20,7 +20,7 @@ class TalonAgent:
         """Processes a user message using OpenAI for an agentic response."""
         try:
             response = openai.chat.completions.create(
-                model="gpt-4",
+                model="gpt-4o",
                 messages=[
                     {"role": "system", "content": "You are TALON, an AI travel agent that unifies fragmented travel systems. Your goal is to identify problems, find solutions, and coordinate across platforms. Be proactive and intelligent."},
                     {"role": "user", "content": message}
