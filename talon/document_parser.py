@@ -148,6 +148,113 @@ CRITICAL RULES:
                 "error": str(e)
             }
 
+    def parse_travel_text(self, text_content):
+        """
+        Parse pasted email/text confirmation and extract structured data
+        using OpenAI GPT-4
+
+        Args:
+            text_content: Raw text or HTML from pasted email
+
+        Returns:
+            dict: Structured travel data extracted from the text
+        """
+        try:
+            print(f"Parsing text content (length: {len(text_content)} chars)")
+
+            # Create the system prompt for structured extraction
+            system_prompt = """You are a travel document parser. Extract ALL relevant information from travel confirmation emails/text into structured JSON format.
+
+IMPORTANT: Extract EVERY piece of information you can find. Be thorough and detailed.
+
+Return ONLY valid JSON in this exact format:
+{
+  "document_type": "flight|hotel|car_rental|activity|dining|transport|other",
+  "elements": [
+    {
+      "type": "flight|hotel|activity|dining|transport|other",
+      "title": "Brief descriptive title",
+      "start_datetime": "ISO 8601 format (YYYY-MM-DDTHH:MM:SS) or null",
+      "end_datetime": "ISO 8601 format (YYYY-MM-DDTHH:MM:SS) or null",
+      "location": "Full location string (address, city, airport code, etc.)",
+      "confirmation_number": "Confirmation/booking number or null",
+      "price": numeric value only (no currency symbols) or null,
+      "currency": "USD|EUR|GBP etc or null",
+      "status": "confirmed|pending|cancelled",
+      "details": {
+        // For flights: airline, flight_number, seat, gate, terminal, baggage_allowance, class
+        // For hotels: hotel_name, room_type, check_in_time, check_out_time, guests, amenities, address, phone
+        // For cars: company, vehicle_type, pickup_location, dropoff_location, driver_name
+        // For activities: venue, description, attendees, category
+        // For dining: restaurant_name, cuisine, reservation_time, party_size
+        // Any other relevant details from the confirmation
+      }
+    }
+  ],
+  "metadata": {
+    "traveler_name": "Name of the traveler or null",
+    "total_cost": numeric total or null,
+    "booking_date": "YYYY-MM-DD or null",
+    "vendor": "Company/airline/hotel name or null"
+  }
+}
+
+CRITICAL RULES:
+1. Extract ALL information visible in the text/email
+2. If a reservation has multiple segments/dates, create separate elements for each
+3. For dates/times, convert to ISO 8601 format (e.g., "2025-11-07T14:30:00")
+4. For prices, extract only numeric values (remove $, €, etc symbols)
+5. Be specific with locations (include airport codes, full addresses, phone numbers)
+6. Include all details like confirmation numbers, booking references, contact info
+7. Return ONLY the JSON object, no additional text
+8. If the text doesn't contain travel information, return document_type: "other" with empty elements array"""
+
+            # Call OpenAI GPT-4 (text model, not vision)
+            response = openai.chat.completions.create(
+                model="gpt-4o",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": f"Extract all travel information from this confirmation:\n\n{text_content}"}
+                ],
+                max_tokens=2000,
+                temperature=0  # Low temperature for consistent extraction
+            )
+
+            # Parse the response
+            content = response.choices[0].message.content.strip()
+
+            # Remove markdown code blocks if present
+            if content.startswith("```json"):
+                content = content[7:]  # Remove ```json
+            if content.startswith("```"):
+                content = content[3:]  # Remove ```
+            if content.endswith("```"):
+                content = content[:-3]  # Remove closing ```
+            content = content.strip()
+
+            # Parse JSON
+            parsed_data = json.loads(content)
+
+            return {
+                "success": True,
+                "data": parsed_data
+            }
+
+        except json.JSONDecodeError as e:
+            print(f"JSON parsing error: {e}")
+            print(f"Raw content: {content}")
+            return {
+                "success": False,
+                "error": "Failed to parse text structure",
+                "raw_response": content
+            }
+        except Exception as e:
+            print(f"Error parsing text: {e}")
+            return {
+                "success": False,
+                "error": str(e)
+            }
+
     def validate_element_data(self, element):
         """
         Validate and clean element data before saving to database
