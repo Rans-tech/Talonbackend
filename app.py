@@ -165,6 +165,11 @@ def parse_text():
 
         parsed_data = parse_result['data']
         created_elements = []
+        duplicate_count = 0
+
+        # Get existing elements to check which are new
+        existing_response = db_client.client.table('trip_elements').select("id").eq('trip_id', trip_id).execute()
+        existing_ids = {elem['id'] for elem in (existing_response.data or [])}
 
         # Create trip elements from parsed data
         if 'elements' in parsed_data:
@@ -173,11 +178,15 @@ def parse_text():
                     # Validate and clean the element data
                     validated_element = document_parser.validate_element_data(element_data)
 
-                    # Create the trip element in the database
+                    # Create the trip element in the database (will return existing if duplicate)
                     created_element = db_client.create_trip_element(trip_id, validated_element)
 
                     if created_element:
-                        created_elements.append(created_element)
+                        # Check if this is a new element or existing duplicate
+                        if created_element['id'] in existing_ids:
+                            duplicate_count += 1
+                        else:
+                            created_elements.append(created_element)
 
                         # Link document to element if document_id provided
                         if document_id and len(created_elements) == 1:  # Link to first element
@@ -186,10 +195,19 @@ def parse_text():
                     print(f"Error creating element: {e}")
                     continue
 
+        # Build message
+        message_parts = []
+        if created_elements:
+            message_parts.append(f'Created {len(created_elements)} new element(s)')
+        if duplicate_count:
+            message_parts.append(f'{duplicate_count} duplicate(s) skipped')
+        message = ', '.join(message_parts) if message_parts else 'No new elements created'
+
         return jsonify({
             'success': True,
-            'message': f'Successfully created {len(created_elements)} trip element(s)',
+            'message': message,
             'elements': created_elements,
+            'duplicates_skipped': duplicate_count,
             'metadata': parsed_data.get('metadata', {}),
             'document_type': parsed_data.get('document_type')
         })

@@ -38,9 +38,29 @@ class SupabaseDB:
             print(f"Error updating trip data: {e}")
             return None
 
+    def check_duplicate_element(self, trip_id, confirmation_number):
+        """Check if an element with the same confirmation number already exists for this trip."""
+        if not confirmation_number:
+            return None
+
+        try:
+            response = self.client.table('trip_elements').select("*").eq('trip_id', trip_id).eq('confirmation_number', confirmation_number).execute()
+            return response.data[0] if response.data else None
+        except Exception as e:
+            print(f"Error checking duplicate: {e}")
+            return None
+
     def create_trip_element(self, trip_id, element_data):
         """Creates a new trip element in the database."""
         try:
+            # Check for duplicate based on confirmation number
+            confirmation_number = element_data.get('confirmation_number')
+            if confirmation_number:
+                existing = self.check_duplicate_element(trip_id, confirmation_number)
+                if existing:
+                    print(f"Duplicate found: confirmation #{confirmation_number} already exists")
+                    return existing  # Return existing element instead of creating duplicate
+
             # Prepare the data for insertion
             insert_data = {
                 'trip_id': trip_id,
@@ -49,7 +69,7 @@ class SupabaseDB:
                 'start_datetime': element_data.get('start_datetime'),
                 'end_datetime': element_data.get('end_datetime'),
                 'location': element_data.get('location'),
-                'confirmation_number': element_data.get('confirmation_number'),
+                'confirmation_number': confirmation_number,
                 'price': element_data.get('price'),
                 'status': element_data.get('status', 'confirmed'),
                 'details': element_data.get('details', {})
