@@ -257,6 +257,17 @@ Element 2: Return flight (start_datetime: 2025-11-12T18:00:00, end_datetime: 202
             # Parse JSON
             parsed_data = json.loads(content)
 
+            # Debug logging for time extraction
+            print("=== GPT-4 PARSED DATA ===")
+            if 'elements' in parsed_data:
+                for elem in parsed_data['elements']:
+                    print(f"Element: {elem.get('title')}")
+                    print(f"  Type: {elem.get('type')}")
+                    print(f"  start_datetime: {elem.get('start_datetime')}")
+                    print(f"  end_datetime: {elem.get('end_datetime')}")
+                    print(f"  location: {elem.get('location')}")
+            print("========================")
+
             return {
                 "success": True,
                 "data": parsed_data
