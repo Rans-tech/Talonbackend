@@ -77,11 +77,13 @@ def parse_document():
             }), 400
 
         # Verify trip exists
+        print(f"Looking for trip_id: {trip_id}")
         trip = db_client.get_trip(trip_id)
+        print(f"Trip found: {trip}")
         if not trip:
             return jsonify({
                 'success': False,
-                'error': 'Trip not found'
+                'error': f'Trip not found with id: {trip_id}'
             }), 404
 
         # Parse the document
