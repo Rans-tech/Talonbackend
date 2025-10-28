@@ -206,30 +206,43 @@ CRITICAL RULES:
    - Connecting flights = separate element for each leg
    - Example: "Flight AA100 DFW->MCO on Nov 7" and "Flight AA200 MCO->DFW on Nov 12" = 2 separate elements
 3. **TIMES**: Extract exact departure and arrival times with extreme precision
-   - start_datetime = DEPARTURE time (when plane leaves)
-   - end_datetime = ARRIVAL time (when plane lands)
-   - Format: "2025-11-07T14:30:00" (YYYY-MM-DDTHH:MM:SS)
+   - start_datetime = DEPARTURE time (when plane leaves) in LOCAL TIME
+   - end_datetime = ARRIVAL time (when plane lands) in LOCAL TIME
+   - Format: "2025-11-07T14:30:00" (YYYY-MM-DDTHH:MM:SS) - NO TIMEZONE SUFFIX
    - If time shows "2:30 PM", convert to "14:30:00"
-   - Include timezone if available in details
+   - DO NOT include +00:00 or any timezone indicator in the datetime string
+   - These times are in the LOCAL timezone of the location
 4. **LOCATIONS**: For flights, use airport codes and full names
    - Location format for flights: "From [Origin Airport Code] to [Destination Airport Code]"
    - Example: "From DFW (Dallas) to MCO (Orlando)"
 5. For prices, extract only numeric values (remove $, €, etc symbols)
-6. Include all details like confirmation numbers, booking references, contact info, seat assignments
-7. **TITLES**: Make descriptive
+6. **CONFIRMATION NUMBERS**: CRITICAL - Extract confirmation/booking numbers
+   - ALL elements from the SAME booking share the SAME confirmation number
+   - For round-trip flights: BOTH flights get the SAME confirmation number
+   - Look for: "Confirmation #", "Booking Reference", "Confirmation Number", etc.
+   - Include this in EVERY element from the same booking
+7. Include all other details like contact info, seat assignments, amenities
+8. **TITLES**: Make descriptive
    - Flight: "[Airline] [Flight#] from [Origin] to [Dest]"
    - Hotel: "[Hotel Name] Stay"
-8. Return ONLY the JSON object, no additional text
-9. If the text doesn't contain travel information, return document_type: "other" with empty elements array
+9. Return ONLY the JSON object, no additional text
+10. If the text doesn't contain travel information, return document_type: "other" with empty elements array
 
 FLIGHT PARSING EXAMPLE:
 If you see:
-"Outbound: AA1234 DFW-MCO Departs 10:30 AM Nov 7, Arrives 2:15 PM
+"Confirmation # ABC123
+Outbound: AA1234 DFW-MCO Departs 10:30 AM Nov 7, Arrives 2:15 PM
 Return: AA5678 MCO-DFW Departs 6:00 PM Nov 12, Arrives 8:45 PM"
 
-You MUST create 2 separate flight elements:
-Element 1: Outbound flight (start_datetime: 2025-11-07T10:30:00, end_datetime: 2025-11-07T14:15:00)
-Element 2: Return flight (start_datetime: 2025-11-12T18:00:00, end_datetime: 2025-11-12T20:45:00)"""
+You MUST create 2 separate flight elements WITH THE SAME CONFIRMATION NUMBER:
+Element 1: Outbound flight
+  - start_datetime: 2025-11-07T10:30:00 (NO timezone)
+  - end_datetime: 2025-11-07T14:15:00 (NO timezone)
+  - confirmation_number: "ABC123"
+Element 2: Return flight
+  - start_datetime: 2025-11-12T18:00:00 (NO timezone)
+  - end_datetime: 2025-11-12T20:45:00 (NO timezone)
+  - confirmation_number: "ABC123" (SAME as outbound)"""
 
             # Call OpenAI GPT-4 (text model, not vision)
             response = openai.chat.completions.create(
