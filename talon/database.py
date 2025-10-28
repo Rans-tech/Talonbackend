@@ -30,5 +30,48 @@ class SupabaseDB:
             print(f"Error updating trip data: {e}")
             return None
 
+    def create_trip_element(self, trip_id, element_data):
+        """Creates a new trip element in the database."""
+        try:
+            # Prepare the data for insertion
+            insert_data = {
+                'trip_id': trip_id,
+                'type': element_data.get('type'),
+                'title': element_data.get('title'),
+                'start_datetime': element_data.get('start_datetime'),
+                'end_datetime': element_data.get('end_datetime'),
+                'location': element_data.get('location'),
+                'confirmation_number': element_data.get('confirmation_number'),
+                'price': element_data.get('price'),
+                'status': element_data.get('status', 'confirmed'),
+                'details': element_data.get('details', {})
+            }
+
+            response = self.client.table('trip_elements').insert(insert_data).execute()
+            return response.data[0] if response.data else None
+        except Exception as e:
+            print(f"Error creating trip element: {e}")
+            return None
+
+    def update_trip_document(self, document_id, element_id):
+        """Links a document to a trip element."""
+        try:
+            response = self.client.table('trip_documents').update({
+                'trip_element_id': element_id
+            }).eq('id', document_id).execute()
+            return response.data
+        except Exception as e:
+            print(f"Error updating trip document: {e}")
+            return None
+
+    def get_trip(self, trip_id):
+        """Fetches a trip from the database."""
+        try:
+            response = self.client.table('trips').select("*").eq('id', trip_id).execute()
+            return response.data[0] if response.data else None
+        except Exception as e:
+            print(f"Error fetching trip: {e}")
+            return None
+
 # Initialize a single instance for the app to use
 db_client = SupabaseDB()
