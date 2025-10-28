@@ -26,6 +26,16 @@ class DocumentParser:
             dict: Structured travel data extracted from the document
         """
         try:
+            print(f"Parsing document with MIME type: {file_type}")
+
+            # Check if file type is supported
+            supported_image_types = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp']
+
+            if file_type not in supported_image_types:
+                return {
+                    "success": False,
+                    "error": f"Unsupported file type: {file_type}. Please upload an image file (JPG, PNG, GIF, or WebP). For PDFs, please take a screenshot or convert to an image first."
+                }
             # Create the system prompt for structured extraction
             system_prompt = """You are a travel document parser. Extract ALL relevant information from travel documents (flight confirmations, hotel bookings, car rentals, etc.) into structured JSON format.
 
