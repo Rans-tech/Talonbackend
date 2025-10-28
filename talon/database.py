@@ -6,10 +6,18 @@ load_dotenv()
 
 class SupabaseDB:
     def __init__(self):
-        url: str = os.environ.get("SUPABASE_URL")
-        key: str = os.environ.get("SUPABASE_KEY")
+        url: str = os.environ.get("SUPABASE_URL", "").strip()
+        key: str = os.environ.get("SUPABASE_KEY", "").strip()
+
+        # Debug logging
+        print(f"Supabase URL length: {len(url)}")
+        print(f"Supabase URL (first 30 chars): {url[:30] if url else 'EMPTY'}")
+        print(f"Supabase KEY length: {len(key)}")
+        print(f"Supabase KEY (first 30 chars): {key[:30] if key else 'EMPTY'}")
+
         if not url or not key:
             raise ValueError("Supabase URL or Key not found in environment variables.")
+
         self.client: Client = create_client(url, key)
 
     def get_user_profile(self, user_id):
