@@ -182,7 +182,7 @@ Return ONLY valid JSON in this exact format:
       "currency": "USD|EUR|GBP etc or null",
       "status": "confirmed|pending|cancelled",
       "details": {
-        // For flights: airline, flight_number, seat, gate, terminal, baggage_allowance, class
+        // For flights: airline, flight_number, seat, gate, terminal, baggage_allowance, class, origin_airport, destination_airport
         // For hotels: hotel_name, room_type, check_in_time, check_out_time, guests, amenities, address, phone
         // For cars: company, vehicle_type, pickup_location, dropoff_location, driver_name
         // For activities: venue, description, attendees, category
@@ -200,14 +200,36 @@ Return ONLY valid JSON in this exact format:
 }
 
 CRITICAL RULES:
-1. Extract ALL information visible in the text/email
-2. If a reservation has multiple segments/dates, create separate elements for each
-3. For dates/times, convert to ISO 8601 format (e.g., "2025-11-07T14:30:00")
-4. For prices, extract only numeric values (remove $, €, etc symbols)
-5. Be specific with locations (include airport codes, full addresses, phone numbers)
-6. Include all details like confirmation numbers, booking references, contact info
-7. Return ONLY the JSON object, no additional text
-8. If the text doesn't contain travel information, return document_type: "other" with empty elements array"""
+1. Extract ALL information visible in the text/email with 100% accuracy
+2. **FLIGHTS**: ALWAYS create SEPARATE elements for EACH flight leg/segment
+   - Round-trip = 2 elements (outbound + return)
+   - Connecting flights = separate element for each leg
+   - Example: "Flight AA100 DFW->MCO on Nov 7" and "Flight AA200 MCO->DFW on Nov 12" = 2 separate elements
+3. **TIMES**: Extract exact departure and arrival times with extreme precision
+   - start_datetime = DEPARTURE time (when plane leaves)
+   - end_datetime = ARRIVAL time (when plane lands)
+   - Format: "2025-11-07T14:30:00" (YYYY-MM-DDTHH:MM:SS)
+   - If time shows "2:30 PM", convert to "14:30:00"
+   - Include timezone if available in details
+4. **LOCATIONS**: For flights, use airport codes and full names
+   - Location format for flights: "From [Origin Airport Code] to [Destination Airport Code]"
+   - Example: "From DFW (Dallas) to MCO (Orlando)"
+5. For prices, extract only numeric values (remove $, €, etc symbols)
+6. Include all details like confirmation numbers, booking references, contact info, seat assignments
+7. **TITLES**: Make descriptive
+   - Flight: "[Airline] [Flight#] from [Origin] to [Dest]"
+   - Hotel: "[Hotel Name] Stay"
+8. Return ONLY the JSON object, no additional text
+9. If the text doesn't contain travel information, return document_type: "other" with empty elements array
+
+FLIGHT PARSING EXAMPLE:
+If you see:
+"Outbound: AA1234 DFW-MCO Departs 10:30 AM Nov 7, Arrives 2:15 PM
+Return: AA5678 MCO-DFW Departs 6:00 PM Nov 12, Arrives 8:45 PM"
+
+You MUST create 2 separate flight elements:
+Element 1: Outbound flight (start_datetime: 2025-11-07T10:30:00, end_datetime: 2025-11-07T14:15:00)
+Element 2: Return flight (start_datetime: 2025-11-12T18:00:00, end_datetime: 2025-11-12T20:45:00)"""
 
             # Call OpenAI GPT-4 (text model, not vision)
             response = openai.chat.completions.create(
