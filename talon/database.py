@@ -38,14 +38,39 @@ class SupabaseDB:
             print(f"Error updating trip data: {e}")
             return None
 
-    def check_duplicate_element(self, trip_id, confirmation_number):
-        """Check if an element with the same confirmation number already exists for this trip."""
+    def check_duplicate_element(self, trip_id, element_data):
+        """Check if an element with the same key details already exists for this trip.
+
+        For flights: Check confirmation + flight details + date (allow multiple flights with same confirmation)
+        For hotels/other: Check confirmation only (don't allow duplicates)
+        """
+        confirmation_number = element_data.get('confirmation_number')
         if not confirmation_number:
             return None
 
         try:
-            response = self.client.table('trip_elements').select("*").eq('trip_id', trip_id).eq('confirmation_number', confirmation_number).execute()
-            return response.data[0] if response.data else None
+            element_type = element_data.get('type')
+
+            # For flights, be more specific - same confirmation can have multiple flights
+            if element_type == 'flight':
+                # Check for exact match: same confirmation AND same start time AND same location
+                start_datetime = element_data.get('start_datetime')
+                location = element_data.get('location')
+
+                if not start_datetime:
+                    return None  # Can't check duplicates without date
+
+                response = self.client.table('trip_elements').select("*").eq('trip_id', trip_id).eq('type', 'flight').eq('confirmation_number', confirmation_number).eq('start_datetime', start_datetime).execute()
+
+                # If we find a flight with same confirmation AND same departure time, it's a duplicate
+                if response.data and len(response.data) > 0:
+                    return response.data[0]
+                return None
+            else:
+                # For non-flights (hotel, car, etc), confirmation number alone is enough
+                response = self.client.table('trip_elements').select("*").eq('trip_id', trip_id).eq('confirmation_number', confirmation_number).execute()
+                return response.data[0] if response.data else None
+
         except Exception as e:
             print(f"Error checking duplicate: {e}")
             return None
@@ -53,12 +78,12 @@ class SupabaseDB:
     def create_trip_element(self, trip_id, element_data):
         """Creates a new trip element in the database."""
         try:
-            # Check for duplicate based on confirmation number
+            # Check for duplicate based on element type
             confirmation_number = element_data.get('confirmation_number')
             if confirmation_number:
-                existing = self.check_duplicate_element(trip_id, confirmation_number)
+                existing = self.check_duplicate_element(trip_id, element_data)
                 if existing:
-                    print(f"Duplicate found: confirmation #{confirmation_number} already exists")
+                    print(f"Duplicate found: {element_data.get('type')} with confirmation #{confirmation_number} already exists")
                     return existing  # Return existing element instead of creating duplicate
 
             # Prepare the data for insertion
