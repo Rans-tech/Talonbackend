@@ -440,6 +440,7 @@ def bulk_invite_members(organization_id):
                 # Generate unique invitation token
                 invitation_token = secrets.token_urlsafe(32)
 
+                # Store email separately for lookup, not in invitation data
                 invitations.append({
                     'organization_id': organization_id,
                     'invited_name': name.strip(),
@@ -448,7 +449,7 @@ def bulk_invite_members(organization_id):
                     'invitation_token': invitation_token,
                     'invitation_sent_at': 'now()',
                     'invited_at': 'now()',
-                    'email': email.strip().lower()
+                    '_email': email.strip().lower()  # Temporary field for lookup only
                 })
 
             except Exception as e:
@@ -480,8 +481,11 @@ def bulk_invite_members(organization_id):
 
         for invitation in invitations:
             try:
+                # Extract email for lookup (don't insert it into DB)
+                email = invitation.pop('_email')
+
                 # Check if email already has a profile
-                profile_check = db_client.client.table('profiles').select('id').eq('email', invitation['email']).execute()
+                profile_check = db_client.client.table('profiles').select('id').eq('email', email).execute()
 
                 if profile_check.data:
                     # User exists - create standard invitation
@@ -489,12 +493,13 @@ def bulk_invite_members(organization_id):
                     invitation['user_id'] = user_id
                     invitation['status'] = 'pending'  # Change to pending since user exists
 
-                # Insert invitation
+                # Insert invitation (email field removed)
                 result = db_client.client.table('organization_members').insert(invitation).execute()
 
                 if result.data:
                     created_invitations.append({
                         **result.data[0],
+                        'email': email,  # Include email in response for display
                         'invite_url': f"{request.host_url}signup?token={invitation['invitation_token']}"
                     })
                     successful += 1
@@ -502,9 +507,9 @@ def bulk_invite_members(organization_id):
                     failed += 1
 
             except Exception as e:
-                print(f"Error creating invitation for {invitation['email']}: {e}")
+                print(f"Error creating invitation for {email}: {e}")
                 failed += 1
-                errors.append(f"{invitation['email']}: {str(e)}")
+                errors.append(f"{email}: {str(e)}")
 
         # Update batch status
         if batch_id:
