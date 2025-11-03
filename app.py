@@ -6,17 +6,22 @@ from talon.document_parser import DocumentParser
 from talon.database import db_client
 import os
 import base64
+import stripe
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# Initialize Stripe
+stripe.api_key = os.getenv('STRIPE_SECRET_KEY')
 
 app = Flask(__name__)
 # Enable CORS for all origins (including localhost for development)
 CORS(app, resources={
     r"/api/*": {
-        "origins": ["http://localhost:5173", "http://localhost:5174", "*"],
+        "origins": "*",
         "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-        "allow_headers": ["Content-Type", "Authorization"]
+        "allow_headers": ["Content-Type", "Authorization"],
+        "supports_credentials": False
     }
 })
 
@@ -216,6 +221,83 @@ def parse_text():
         print(f"Error in parse_text: {e}")
         return jsonify({
             'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/stripe/create-checkout-session', methods=['POST'])
+def create_checkout_session():
+    """Create a Stripe checkout session for subscription"""
+    try:
+        data = request.json
+
+        # Extract required fields
+        tier = data.get('tier')
+        billing_cycle = data.get('billingCycle')
+        user_id = data.get('userId')
+        user_email = data.get('userEmail')
+        quantity = data.get('quantity', 1)
+
+        if not all([tier, billing_cycle, user_id, user_email]):
+            return jsonify({
+                'error': 'Missing required fields'
+            }), 400
+
+        # Price IDs mapping (from your frontend config)
+        STRIPE_PRICE_IDS = {
+            'pro_single': {
+                'monthly': 'price_1SPSaM6e7MGhkeXuJUBfzRO4',
+                'annually': 'price_1SPSaw6e7MGhkeXu3hYTq2Sl',
+            },
+            'family': {
+                'monthly': 'price_1SPSbX6e7MGhkeXuyj9bzT6S',
+                'annually': 'price_1SPSbw6e7MGhkeXuiI46XS1N',
+            },
+            'enterprise': {
+                'monthly': 'price_1SPSg06e7MGhkeXuHjzYy0q5',
+                'annually': 'price_1SPSgj6e7MGhkeXuMbo6bhzp',
+            },
+        }
+
+        price_id = STRIPE_PRICE_IDS.get(tier, {}).get(billing_cycle)
+
+        if not price_id:
+            return jsonify({
+                'error': f'Invalid tier or billing cycle: {tier} {billing_cycle}'
+            }), 400
+
+        # Get origin from request headers
+        origin = request.headers.get('Origin', 'http://localhost:5173')
+
+        # Create Stripe Checkout Session
+        checkout_session = stripe.checkout.Session.create(
+            payment_method_types=['card'],
+            line_items=[{
+                'price': price_id,
+                'quantity': quantity,
+            }],
+            mode='subscription',
+            success_url=f'{origin}/?checkout=success&session_id={{CHECKOUT_SESSION_ID}}',
+            cancel_url=f'{origin}/pricing?checkout=canceled',
+            customer_email=user_email,
+            client_reference_id=user_id,
+            metadata={
+                'userId': user_id,
+                'tier': tier,
+                'billingCycle': billing_cycle,
+                **({"seats": str(quantity)} if tier == 'enterprise' else {})
+            },
+            allow_promotion_codes=True,
+            billing_address_collection='auto',
+        )
+
+        return jsonify({
+            'sessionId': checkout_session.id,
+            'url': checkout_session.url
+        })
+
+    except Exception as e:
+        print(f"Error creating checkout session: {e}")
+        return jsonify({
             'error': str(e)
         }), 500
 
