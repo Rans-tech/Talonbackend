@@ -7,6 +7,10 @@ from talon.database import db_client
 import os
 import base64
 import stripe
+import csv
+import io
+import uuid
+import secrets
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -386,6 +390,232 @@ def create_checkout_session():
     except Exception as e:
         print(f"Error creating checkout session: {e}")
         return jsonify({
+            'error': str(e)
+        }), 500
+
+@app.route('/api/organizations/<organization_id>/invitations/bulk', methods=['POST'])
+def bulk_invite_members(organization_id):
+    """Parse CSV and create pre-invitations for organization members"""
+    try:
+        data = request.json
+        csv_content = data.get('csv_content')
+        invited_by_id = data.get('invited_by_id')
+
+        if not csv_content or not invited_by_id:
+            return jsonify({
+                'success': False,
+                'error': 'Missing required fields: csv_content, invited_by_id'
+            }), 400
+
+        # Verify organization exists
+        org_response = db_client.client.table('organizations').select('id').eq('id', organization_id).execute()
+        if not org_response.data:
+            return jsonify({
+                'success': False,
+                'error': f'Organization not found: {organization_id}'
+            }), 404
+
+        # Parse CSV
+        csv_file = io.StringIO(csv_content)
+        csv_reader = csv.DictReader(csv_file)
+
+        invitations = []
+        errors = []
+
+        for row_num, row in enumerate(csv_reader, start=2):
+            try:
+                # Extract and validate fields (case-insensitive)
+                name = row.get('name') or row.get('Name') or row.get('NAME')
+                email = row.get('email') or row.get('Email') or row.get('EMAIL')
+                role = (row.get('role') or row.get('Role') or row.get('ROLE') or 'member').lower()
+
+                if not name or not email:
+                    errors.append(f"Row {row_num}: Missing name or email")
+                    continue
+
+                # Validate role
+                if role not in ['owner', 'admin', 'member', 'viewer']:
+                    role = 'member'
+
+                # Generate unique invitation token
+                invitation_token = secrets.token_urlsafe(32)
+
+                invitations.append({
+                    'organization_id': organization_id,
+                    'invited_name': name.strip(),
+                    'role': role,
+                    'status': 'invited',
+                    'invitation_token': invitation_token,
+                    'invitation_sent_at': 'now()',
+                    'invited_at': 'now()',
+                    'email': email.strip().lower()
+                })
+
+            except Exception as e:
+                errors.append(f"Row {row_num}: {str(e)}")
+                continue
+
+        if not invitations:
+            return jsonify({
+                'success': False,
+                'error': 'No valid invitations found in CSV',
+                'errors': errors
+            }), 400
+
+        # Create invitation batch record
+        batch_response = db_client.client.table('invitation_batches').insert({
+            'organization_id': organization_id,
+            'uploaded_by': invited_by_id,
+            'file_name': data.get('file_name', 'bulk_upload.csv'),
+            'total_invites': len(invitations),
+            'status': 'processing'
+        }).execute()
+
+        batch_id = batch_response.data[0]['id'] if batch_response.data else None
+
+        # Insert invitations (with pre-created profiles for tracking)
+        successful = 0
+        failed = 0
+        created_invitations = []
+
+        for invitation in invitations:
+            try:
+                # Check if email already has a profile
+                profile_check = db_client.client.table('profiles').select('id').eq('email', invitation['email']).execute()
+
+                if profile_check.data:
+                    # User exists - create standard invitation
+                    user_id = profile_check.data[0]['id']
+                    invitation['user_id'] = user_id
+                    invitation['status'] = 'pending'  # Change to pending since user exists
+
+                # Insert invitation
+                result = db_client.client.table('organization_members').insert(invitation).execute()
+
+                if result.data:
+                    created_invitations.append({
+                        **result.data[0],
+                        'invite_url': f"{request.host_url}signup?token={invitation['invitation_token']}"
+                    })
+                    successful += 1
+                else:
+                    failed += 1
+
+            except Exception as e:
+                print(f"Error creating invitation for {invitation['email']}: {e}")
+                failed += 1
+                errors.append(f"{invitation['email']}: {str(e)}")
+
+        # Update batch status
+        if batch_id:
+            db_client.client.table('invitation_batches').update({
+                'successful_invites': successful,
+                'failed_invites': failed,
+                'status': 'completed',
+                'completed_at': 'now()'
+            }).eq('id', batch_id).execute()
+
+        return jsonify({
+            'success': True,
+            'message': f'Created {successful} invitation(s), {failed} failed',
+            'invitations': created_invitations,
+            'batch_id': batch_id,
+            'successful_count': successful,
+            'failed_count': failed,
+            'errors': errors
+        })
+
+    except Exception as e:
+        print(f"Error in bulk_invite_members: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/invitations/validate/<token>', methods=['GET'])
+def validate_invitation_token(token):
+    """Validate an invitation token and return invitation details"""
+    try:
+        # Look up invitation by token
+        response = db_client.client.table('organization_members').select('''
+            *,
+            organization:organizations(id, name, logo_url)
+        ''').eq('invitation_token', token).eq('status', 'invited').execute()
+
+        if not response.data:
+            return jsonify({
+                'success': False,
+                'error': 'Invalid or expired invitation token'
+            }), 404
+
+        invitation = response.data[0]
+
+        return jsonify({
+            'success': True,
+            'invitation': {
+                'id': invitation['id'],
+                'invited_name': invitation['invited_name'],
+                'role': invitation['role'],
+                'organization': invitation['organization']
+            }
+        })
+
+    except Exception as e:
+        print(f"Error validating invitation token: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/invitations/accept', methods=['POST'])
+def accept_invitation():
+    """Accept an invitation after user signs up"""
+    try:
+        data = request.json
+        token = data.get('token')
+        user_id = data.get('user_id')
+
+        if not token or not user_id:
+            return jsonify({
+                'success': False,
+                'error': 'Missing required fields: token, user_id'
+            }), 400
+
+        # Find invitation
+        invitation_response = db_client.client.table('organization_members').select('*').eq('invitation_token', token).eq('status', 'invited').execute()
+
+        if not invitation_response.data:
+            return jsonify({
+                'success': False,
+                'error': 'Invalid or already accepted invitation'
+            }), 404
+
+        invitation = invitation_response.data[0]
+
+        # Update invitation with user_id and mark as active
+        update_response = db_client.client.table('organization_members').update({
+            'user_id': user_id,
+            'status': 'active',
+            'accepted_at': 'now()',
+            'invitation_token': None  # Clear token after acceptance
+        }).eq('id', invitation['id']).execute()
+
+        if update_response.data:
+            return jsonify({
+                'success': True,
+                'message': 'Invitation accepted successfully',
+                'organization_id': invitation['organization_id']
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': 'Failed to accept invitation'
+            }), 500
+
+    except Exception as e:
+        print(f"Error accepting invitation: {e}")
+        return jsonify({
+            'success': False,
             'error': str(e)
         }), 500
 
