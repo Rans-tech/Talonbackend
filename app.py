@@ -224,6 +224,94 @@ def parse_text():
             'error': str(e)
         }), 500
 
+@app.route('/api/stripe/webhook', methods=['POST'])
+def stripe_webhook():
+    """Handle Stripe webhook events"""
+    payload = request.data
+    sig_header = request.headers.get('Stripe-Signature')
+    webhook_secret = os.getenv('STRIPE_WEBHOOK_SECRET')
+
+    try:
+        # Verify webhook signature
+        event = stripe.Webhook.construct_event(
+            payload, sig_header, webhook_secret
+        )
+    except ValueError as e:
+        # Invalid payload
+        print(f"Invalid payload: {e}")
+        return jsonify({'error': 'Invalid payload'}), 400
+    except stripe.error.SignatureVerificationError as e:
+        # Invalid signature
+        print(f"Invalid signature: {e}")
+        return jsonify({'error': 'Invalid signature'}), 400
+
+    # Handle the event
+    event_type = event['type']
+    print(f"Processing event: {event_type}")
+
+    if event_type == 'checkout.session.completed':
+        session = event['data']['object']
+
+        # Extract metadata
+        user_id = session.get('client_reference_id')
+        tier = session['metadata'].get('tier')
+        billing_cycle = session['metadata'].get('billingCycle')
+
+        if user_id and tier:
+            # Update user's subscription in Supabase
+            try:
+                db_client.client.table('profiles').update({
+                    'subscription_tier': tier,
+                    'stripe_customer_id': session.get('customer'),
+                    'stripe_subscription_id': session.get('subscription'),
+                    'subscription_status': 'active',
+                    'subscription_started_at': 'now()',
+                }).eq('id', user_id).execute()
+
+                print(f"Successfully activated {tier} subscription for user {user_id}")
+            except Exception as e:
+                print(f"Error updating subscription: {e}")
+
+    elif event_type == 'customer.subscription.updated':
+        subscription = event['data']['object']
+        customer_id = subscription['customer']
+
+        # Find user by Stripe customer ID
+        try:
+            result = db_client.client.table('profiles').select('id').eq('stripe_customer_id', customer_id).limit(1).execute()
+            if result.data:
+                user_id = result.data[0]['id']
+                status = subscription['status']
+
+                db_client.client.table('profiles').update({
+                    'subscription_status': status,
+                }).eq('id', user_id).execute()
+
+                print(f"Updated subscription status to {status} for user {user_id}")
+        except Exception as e:
+            print(f"Error updating subscription status: {e}")
+
+    elif event_type == 'customer.subscription.deleted':
+        subscription = event['data']['object']
+        customer_id = subscription['customer']
+
+        # Find user by Stripe customer ID and downgrade to free
+        try:
+            result = db_client.client.table('profiles').select('id').eq('stripe_customer_id', customer_id).limit(1).execute()
+            if result.data:
+                user_id = result.data[0]['id']
+
+                db_client.client.table('profiles').update({
+                    'subscription_tier': 'free',
+                    'subscription_status': 'canceled',
+                }).eq('id', user_id).execute()
+
+                print(f"Downgraded user {user_id} to free tier")
+        except Exception as e:
+            print(f"Error downgrading to free tier: {e}")
+
+    return jsonify({'received': True}), 200
+
 @app.route('/api/stripe/create-checkout-session', methods=['POST'])
 def create_checkout_session():
     """Create a Stripe checkout session for subscription"""
