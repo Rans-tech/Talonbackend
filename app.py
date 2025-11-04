@@ -447,16 +447,17 @@ def bulk_invite_members(organization_id):
                 # Generate unique invitation token
                 invitation_token = secrets.token_urlsafe(32)
 
-                # Store email separately for lookup, not in invitation data
+                # Store email separately for lookup and resending
                 invitations.append({
                     'organization_id': organization_id,
                     'invited_name': name.strip(),
+                    'invited_email': email.strip().lower(),  # Store email for resending
                     'role': role,
                     'status': 'invited',
                     'invitation_token': invitation_token,
                     'invitation_sent_at': 'now()',
                     'invited_at': 'now()',
-                    '_email': email.strip().lower()  # Temporary field for lookup only
+                    '_email': email.strip().lower()  # Temporary field for sending initial email
                 })
 
             except Exception as e:
@@ -573,6 +574,95 @@ def bulk_invite_members(organization_id):
 
     except Exception as e:
         print(f"Error in bulk_invite_members: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/organizations/<organization_id>/invitations/<member_id>/resend', methods=['POST'])
+def resend_invitation(organization_id, member_id):
+    """Resend invitation email to a member"""
+    try:
+        # Get the invitation
+        member_response = db_client.client.table('organization_members').select('*').eq('id', member_id).eq('organization_id', organization_id).single().execute()
+
+        if not member_response.data:
+            return jsonify({
+                'success': False,
+                'error': 'Invitation not found'
+            }), 404
+
+        member = member_response.data
+
+        # Only resend for invited status
+        if member['status'] != 'invited':
+            return jsonify({
+                'success': False,
+                'error': 'Can only resend invitations for members with invited status'
+            }), 400
+
+        # Get organization details
+        org_response = db_client.client.table('organizations').select('id, name').eq('id', organization_id).single().execute()
+        if not org_response.data:
+            return jsonify({
+                'success': False,
+                'error': 'Organization not found'
+            }), 404
+
+        organization = org_response.data
+
+        # Get email from invited_email field
+        email = member.get('invited_email')
+
+        if not email:
+            return jsonify({
+                'success': False,
+                'error': 'Cannot resend: email address not found'
+            }), 400
+
+        # Construct the invite URL
+        invite_url = f"{request.host_url}signup?token={member['invitation_token']}"
+
+        # Send invitation email
+        resend.Emails.send({
+            "from": FROM_EMAIL,
+            "to": email,
+            "subject": f"Reminder: You're invited to join {organization['name']} on Travel Raven",
+            "html": f"""
+            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+                <h2 style="color: #0a1128;">Reminder: You're invited to Travel Raven!</h2>
+                <p>Hello {member['invited_name']},</p>
+                <p>This is a reminder that you've been invited to join <strong>{organization['name']}</strong>'s travel management platform on Travel Raven.</p>
+                <p>As a <strong>{member['role']}</strong>, you'll be able to collaborate with your team to manage travel bookings and itineraries.</p>
+                <div style="margin: 30px 0;">
+                    <a href="{invite_url}" style="background-color: #14b8a6; color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px; display: inline-block;">
+                        Accept Invitation & Sign Up
+                    </a>
+                </div>
+                <p style="color: #666; font-size: 14px;">
+                    Or copy this link into your browser:<br>
+                    <a href="{invite_url}">{invite_url}</a>
+                </p>
+                <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
+                <p style="color: #999; font-size: 12px;">
+                    This invitation was sent to {email}. If you didn't expect this email, you can safely ignore it.
+                </p>
+            </div>
+            """
+        })
+
+        # Update invitation_sent_at timestamp
+        db_client.client.table('organization_members').update({
+            'invitation_sent_at': 'now()'
+        }).eq('id', member_id).execute()
+
+        return jsonify({
+            'success': True,
+            'message': 'Invitation email resent successfully'
+        })
+
+    except Exception as e:
+        print(f"Error resending invitation: {e}")
         return jsonify({
             'success': False,
             'error': str(e)
