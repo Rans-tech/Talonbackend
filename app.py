@@ -738,6 +738,16 @@ def accept_invitation():
         }).eq('id', invitation['id']).execute()
 
         if update_response.data:
+            # Increment organization's seat count
+            org_id = invitation['organization_id']
+            org_response = db_client.client.table('organizations').select('current_seats_used').eq('id', org_id).single().execute()
+
+            if org_response.data:
+                current_seats = org_response.data.get('current_seats_used', 0)
+                db_client.client.table('organizations').update({
+                    'current_seats_used': current_seats + 1
+                }).eq('id', org_id).execute()
+
             return jsonify({
                 'success': True,
                 'message': 'Invitation accepted successfully',
