@@ -920,8 +920,12 @@ def parse_receipt():
 # TASK GENERATION ENDPOINTS
 # ============================================================================
 
-@app.route('/api/trips/<trip_id>/generate-tasks', methods=['POST'])
+@app.route('/api/trips/<trip_id>/generate-tasks', methods=['POST', 'OPTIONS'])
 def generate_trip_tasks(trip_id):
+    # Handle OPTIONS preflight
+    if request.method == 'OPTIONS':
+        return '', 200
+
     """Generate smart tasks for a trip using AI based on trip elements"""
     try:
         data = request.json
