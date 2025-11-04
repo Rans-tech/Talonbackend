@@ -21,6 +21,7 @@ stripe.api_key = os.getenv('STRIPE_SECRET_KEY')
 
 # Initialize Resend
 resend.api_key = os.getenv('RESEND_API_KEY')
+FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:5173')
 FROM_EMAIL = os.getenv('FROM_EMAIL', 'noreply@travelraven.com')
 
 app = Flask(__name__)
@@ -505,7 +506,7 @@ def bulk_invite_members(organization_id):
                 result = db_client.client.table('organization_members').insert(invitation).execute()
 
                 if result.data:
-                    invite_url = f"{request.host_url}signup?token={invitation['invitation_token']}"
+                    invite_url = f"{FRONTEND_URL}/signup?token={invitation['invitation_token']}"
 
                     created_invitations.append({
                         **result.data[0],
@@ -621,7 +622,7 @@ def resend_invitation(organization_id, member_id):
             }), 400
 
         # Construct the invite URL
-        invite_url = f"{request.host_url}signup?token={member['invitation_token']}"
+        invite_url = f"{FRONTEND_URL}/signup?token={member['invitation_token']}"
 
         # Send invitation email
         resend.Emails.send({
