@@ -453,3 +453,77 @@ CRITICAL RULES:
                 "success": False,
                 "error": str(e)
             }
+
+    def generate_smart_tasks(self, trip_elements):
+        """Generate smart travel tasks from trip elements using GPT-4o"""
+        try:
+            print(f"Generating tasks for {len(trip_elements)} elements")
+
+            system_prompt = """You are a travel planning assistant. Generate actionable tasks from trip itineraries.
+
+Return ONLY valid JSON:
+{
+  "tasks": [
+    {
+      "title": "Actionable task title",
+      "description": "Detailed description",
+      "priority": "high|medium|low",
+      "category": "pre_trip|in_trip|dining|activities|return",
+      "due_date": "ISO datetime or null",
+      "trigger_condition": "When to do this"
+    }
+  ]
+}
+
+Examples:
+- "Check in for Southwest Flight 3732" (24h before, high priority)
+- "Review Narcoossee's menu" (2 days before, medium priority)
+- "Pack rain gear for outdoor activities" (before trip, medium priority)"""
+
+            elements_summary = []
+            for el in trip_elements:
+                elements_summary.append({
+                    "type": el.get('type'),
+                    "title": el.get('title'),
+                    "start_datetime": el.get('start_datetime'),
+                    "location": el.get('location'),
+                    "confirmation_number": el.get('confirmation_number')
+                })
+
+            user_prompt = f"""Generate 5-10 actionable tasks for this trip:
+
+{json.dumps(elements_summary, indent=2)}
+
+Make tasks specific and helpful."""
+
+            response = openai.chat.completions.create(
+                model="gpt-4o",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                temperature=0.7,
+                max_tokens=2000
+            )
+
+            response_text = response.choices[0].message.content.strip()
+
+            if response_text.startswith('```'):
+                response_text = response_text.split('```')[1]
+                if response_text.startswith('json'):
+                    response_text = response_text[4:]
+                response_text = response_text.strip()
+
+            parsed_data = json.loads(response_text)
+
+            return {
+                "success": True,
+                "tasks": parsed_data.get('tasks', [])
+            }
+
+        except Exception as e:
+            print(f"Error generating tasks: {e}")
+            return {
+                "success": False,
+                "error": str(e)
+            }

@@ -915,3 +915,65 @@ def parse_receipt():
             'success': False,
             'error': str(e)
         }), 500
+
+# ============================================================================
+# TASK GENERATION ENDPOINTS
+# ============================================================================
+
+@app.route('/api/trips/<trip_id>/generate-tasks', methods=['POST'])
+def generate_trip_tasks(trip_id):
+    """Generate smart tasks for a trip using AI based on trip elements"""
+    try:
+        data = request.json
+        user_id = data.get('user_id')
+        
+        if not user_id:
+            return jsonify({'success': False, 'error': 'user_id required'}), 400
+        
+        # Fetch trip elements from database
+        trip_response = db_client.client.table('trip_elements').select('*').eq('trip_id', trip_id).execute()
+        
+        if not trip_response.data or len(trip_response.data) == 0:
+            return jsonify({
+                'success': False,
+                'error': 'No trip elements found. Add flights, hotels, or activities first.'
+            }), 400
+        
+        trip_elements = trip_response.data
+        
+        # Generate tasks using AI
+        result = document_parser.generate_smart_tasks(trip_elements)
+        
+        if not result.get('success'):
+            return jsonify(result), 500
+        
+        # Insert tasks into database
+        tasks_to_insert = []
+        for task in result.get('tasks', []):
+            task_data = {
+                'trip_id': trip_id,
+                'title': task['title'],
+                'description': task.get('description', ''),
+                'status': 'pending',
+                'priority': task.get('priority', 'medium'),
+                'due_date': task.get('due_date')
+            }
+            tasks_to_insert.append(task_data)
+        
+        if tasks_to_insert:
+            insert_response = db_client.client.table('trip_tasks').insert(tasks_to_insert).execute()
+            
+            return jsonify({
+                'success': True,
+                'message': f'Generated {len(tasks_to_insert)} tasks',
+                'tasks': insert_response.data
+            })
+        
+        return jsonify({
+            'success': False,
+            'error': 'No tasks generated'
+        }), 500
+        
+    except Exception as e:
+        print(f"Error generating tasks: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
