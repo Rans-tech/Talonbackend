@@ -336,3 +336,120 @@ Element 2: Return flight
             element['details'] = {}
 
         return element
+
+    def parse_receipt(self, file_content, file_type):
+        """
+        Parse a receipt image and extract expense data for auto-filling forms
+        
+        Args:
+            file_content: Base64 encoded image content
+            file_type: MIME type of the image
+            
+        Returns:
+            dict: Structured expense data (amount, merchant, date, category)
+        """
+        try:
+            print(f"Parsing receipt with MIME type: {file_type}")
+            
+            # Check if file type is supported
+            supported_image_types = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp']
+            
+            if file_type not in supported_image_types:
+                return {
+                    "success": False,
+                    "error": f"Unsupported file type: {file_type}. Please upload an image file."
+                }
+            
+            # Create receipt-specific prompt
+            system_prompt = """You are a receipt parser. Extract expense information from receipt images.
+
+Return ONLY valid JSON in this exact format:
+{
+  "amount": 45.67,
+  "merchant": "Restaurant/Store Name",
+  "date": "2025-11-05",
+  "category": "food_dining|accommodation|transportation|tours_activities|shopping|other",
+  "description": "Brief description of purchase",
+  "currency": "USD"
+}
+
+Category guidelines:
+- food_dining: Restaurants, cafes, bars, food delivery
+- accommodation: Hotels, Airbnb, lodging
+- transportation: Uber, taxi, gas, parking, public transit
+- tours_activities: Tours, attractions, entertainment, tickets
+- shopping: Retail purchases, souvenirs, clothing
+- other: Everything else
+
+CRITICAL RULES:
+1. Extract the TOTAL amount (not subtotal)
+2. Use merchant/restaurant name from receipt
+3. Convert date to YYYY-MM-DD format
+4. Choose the most appropriate category
+5. Return ONLY the JSON object, no additional text"""
+            
+            # Prepare the Vision API message
+            messages = [
+                {
+                    "role": "system",
+                    "content": system_prompt
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "Extract expense information from this receipt and return structured JSON."
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:{file_type};base64,{file_content}"
+                            }
+                        }
+                    ]
+                }
+            ]
+            
+            # Call OpenAI Vision API
+            response = openai.chat.completions.create(
+                model="gpt-4o",
+                messages=messages,
+                max_tokens=500,
+                temperature=0.1
+            )
+            
+            # Extract and parse the response
+            content = response.choices[0].message.content
+            print(f"OpenAI receipt response: {content}")
+            
+            # Clean up response if needed
+            content = content.strip()
+            if content.startswith('```json'):
+                content = content[7:]
+            if content.startswith('```'):
+                content = content[3:]
+            if content.endswith('```'):
+                content = content[:-3]
+            content = content.strip()
+            
+            # Parse JSON
+            parsed_data = json.loads(content)
+            
+            return {
+                "success": True,
+                "data": parsed_data
+            }
+            
+        except json.JSONDecodeError as e:
+            print(f"JSON parsing error: {e}")
+            return {
+                "success": False,
+                "error": f"Failed to parse AI response as JSON: {str(e)}"
+            }
+        except Exception as e:
+            print(f"Error parsing receipt: {e}")
+            return {
+                "success": False,
+                "error": str(e)
+            }

@@ -888,3 +888,30 @@ def upload_receipt(expense_id):
     except Exception as e:
         print(f"Error uploading receipt: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/receipts/parse', methods=['POST'])
+def parse_receipt():
+    """Parse receipt image and extract expense data"""
+    try:
+        data = request.json
+        
+        if not data.get('file_content') or not data.get('file_type'):
+            return jsonify({
+                'success': False,
+                'error': 'Missing required fields: file_content, file_type'
+            }), 400
+        
+        file_content = data['file_content']
+        file_type = data['file_type']
+        
+        # Parse the receipt using AI
+        result = document_parser.parse_receipt(file_content, file_type)
+        
+        return jsonify(result)
+        
+    except Exception as e:
+        print(f"Error parsing receipt: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
