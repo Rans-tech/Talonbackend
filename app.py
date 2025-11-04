@@ -768,3 +768,123 @@ def accept_invitation():
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
+
+# ============================================================================
+# EXPENSE TRACKING ENDPOINTS
+# ============================================================================
+
+@app.route('/api/trips/<trip_id>/expenses', methods=['GET'])
+def get_trip_expenses(trip_id):
+    """Get all expenses for a trip"""
+    try:
+        response = db_client.client.table('expenses').select('*').eq('trip_id', trip_id).order('expense_date', desc=True).execute()
+        return jsonify({'success': True, 'expenses': response.data})
+    except Exception as e:
+        print(f"Error fetching expenses: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/trips/<trip_id>/expenses', methods=['POST'])
+def create_expense(trip_id):
+    """Create a new expense for a trip"""
+    try:
+        data = request.json
+        if not data.get('amount') or not data.get('category') or not data.get('expense_date') or not data.get('user_id'):
+            return jsonify({'success': False, 'error': 'Missing required fields'}), 400
+
+        expense_data = {
+            'trip_id': trip_id,
+            'user_id': data['user_id'],
+            'amount': float(data['amount']),
+            'category': data['category'],
+            'description': data.get('description', ''),
+            'expense_date': data['expense_date'],
+            'notes': data.get('notes', ''),
+            'receipt_image_url': data.get('receipt_image_url', None)
+        }
+        response = db_client.client.table('expenses').insert(expense_data).execute()
+        if response.data:
+            return jsonify({'success': True, 'expense': response.data[0]})
+        return jsonify({'success': False, 'error': 'Failed to create expense'}), 500
+    except Exception as e:
+        print(f"Error creating expense: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/expenses/<expense_id>', methods=['PUT'])
+def update_expense(expense_id):
+    """Update an existing expense"""
+    try:
+        data = request.json
+        update_data = {}
+        if 'amount' in data:
+            update_data['amount'] = float(data['amount'])
+        if 'category' in data:
+            update_data['category'] = data['category']
+        if 'description' in data:
+            update_data['description'] = data['description']
+        if 'expense_date' in data:
+            update_data['expense_date'] = data['expense_date']
+        if 'notes' in data:
+            update_data['notes'] = data['notes']
+        if 'receipt_image_url' in data:
+            update_data['receipt_image_url'] = data['receipt_image_url']
+
+        response = db_client.client.table('expenses').update(update_data).eq('id', expense_id).execute()
+        if response.data:
+            return jsonify({'success': True, 'expense': response.data[0]})
+        return jsonify({'success': False, 'error': 'Failed to update expense'}), 500
+    except Exception as e:
+        print(f"Error updating expense: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/expenses/<expense_id>', methods=['DELETE'])
+def delete_expense(expense_id):
+    """Delete an expense"""
+    try:
+        expense_response = db_client.client.table('expenses').select('receipt_image_url').eq('id', expense_id).single().execute()
+        if expense_response.data and expense_response.data.get('receipt_image_url'):
+            receipt_url = expense_response.data['receipt_image_url']
+            if 'expense-receipts/' in receipt_url:
+                file_path = receipt_url.split('expense-receipts/')[1]
+                try:
+                    db_client.client.storage.from_('expense-receipts').remove([file_path])
+                except Exception as storage_error:
+                    print(f"Warning: Failed to delete receipt image: {storage_error}")
+
+        db_client.client.table('expenses').delete().eq('id', expense_id).execute()
+        return jsonify({'success': True, 'message': 'Expense deleted successfully'})
+    except Exception as e:
+        print(f"Error deleting expense: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/expenses/<expense_id>/receipt', methods=['POST'])
+def upload_receipt(expense_id):
+    """Upload receipt image for an expense"""
+    try:
+        data = request.json
+        if not data.get('user_id') or not data.get('file_data') or not data.get('file_name'):
+            return jsonify({'success': False, 'error': 'Missing required fields'}), 400
+
+        user_id = data['user_id']
+        file_data = data['file_data']
+        file_name = data['file_name']
+
+        try:
+            if ',' in file_data:
+                file_data = file_data.split(',')[1]
+            image_bytes = base64.b64decode(file_data)
+        except Exception as decode_error:
+            return jsonify({'success': False, 'error': f'Invalid base64 image data: {str(decode_error)}'}), 400
+
+        file_extension = file_name.split('.')[-1] if '.' in file_name else 'jpg'
+        unique_filename = f"{user_id}/{expense_id}_{uuid.uuid4().hex[:8]}.{file_extension}"
+
+        db_client.client.storage.from_('expense-receipts').upload(unique_filename, image_bytes, {'content-type': f'image/{file_extension}'})
+        public_url = db_client.client.storage.from_('expense-receipts').get_public_url(unique_filename)
+
+        update_response = db_client.client.table('expenses').update({'receipt_image_url': public_url}).eq('id', expense_id).execute()
+        if update_response.data:
+            return jsonify({'success': True, 'receipt_url': public_url, 'expense': update_response.data[0]})
+        return jsonify({'success': False, 'error': 'Failed to update expense with receipt URL'}), 500
+    except Exception as e:
+        print(f"Error uploading receipt: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
