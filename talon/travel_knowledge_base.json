@@ -1,0 +1,260 @@
+{
+  "version": "1.0.0",
+  "last_updated": "2025-11-04",
+  "description": "Travel intelligence knowledge base for smart task generation and agentic operations",
+
+  "airports": {
+    "MCO": {
+      "name": "Orlando International Airport",
+      "city": "Orlando, FL",
+      "typical_uber_to_disney": {"duration": "25-35 min", "cost": "$40-60"},
+      "typical_uber_to_universal": {"duration": "15-20 min", "cost": "$25-35"},
+      "insider_tips": [
+        "Order Uber from Level 2 (arrivals) to avoid surge pricing from Level 1",
+        "Mears Connect offers shared shuttle to Disney resorts at $16pp",
+        "Rental car counters are off-site, add 20min for shuttle wait"
+      ],
+      "checkin_opens": "24 hours before departure",
+      "tsa_wait_times": {"morning_peak": "30-45 min", "midday": "15-25 min", "evening": "20-30 min"}
+    },
+    "ORD": {
+      "name": "O'Hare International Airport",
+      "city": "Chicago, IL",
+      "typical_uber_downtown": {"duration": "30-50 min", "cost": "$35-55"},
+      "insider_tips": [
+        "Blue Line train to downtown is $5 and often faster than Uber",
+        "Terminal 5 international has longest security waits, arrive 90min early",
+        "TSA PreCheck lines can be 5min vs 45min standard"
+      ]
+    },
+    "MDW": {
+      "name": "Chicago Midway Airport",
+      "city": "Chicago, IL",
+      "typical_uber_downtown": {"duration": "25-40 min", "cost": "$30-45"},
+      "insider_tips": [
+        "Orange Line train to downtown is $5",
+        "Smaller airport, security usually 15-20min",
+        "Southwest hub - free checked bags (2 per passenger)"
+      ]
+    }
+  },
+
+  "airlines": {
+    "Southwest": {
+      "checkin_window": "24 hours before departure",
+      "insider_tips": [
+        "No assigned seats - check in exactly 24h before for best boarding position",
+        "A1-15 boards first, consider Early Bird Check-In ($15-25) for better seats",
+        "Free checked bags (2 per person) - rare among US carriers",
+        "No change fees - flexible rebooking",
+        "Download Southwest app for mobile boarding pass"
+      ],
+      "mobile_app_required": true
+    },
+    "Delta": {
+      "checkin_window": "24 hours before departure",
+      "insider_tips": [
+        "Fly Delta app required for mobile boarding",
+        "SkyMiles members get free seat selection 24h before",
+        "Comfort+ upgrade often available day-of for $50-100"
+      ]
+    },
+    "United": {
+      "checkin_window": "24 hours before departure",
+      "insider_tips": [
+        "United app required for mobile boarding",
+        "Basic Economy has last boarding group",
+        "Economy Plus seats have 4+ inches extra legroom"
+      ]
+    }
+  },
+
+  "destinations": {
+    "orlando_disney": {
+      "name": "Walt Disney World, Orlando",
+      "required_apps": [
+        {
+          "name": "My Disney Experience",
+          "purpose": "Lightning Lane, mobile ordering, PhotoPass",
+          "setup_deadline": "7 days before arrival for resort guests (LL booking)",
+          "insider_tip": "Link tickets and hotel reservation ASAP to unlock 7-day advance LL booking"
+        }
+      ],
+      "advance_bookings": [
+        {
+          "item": "Genie+ / Lightning Lane",
+          "window": "7 days advance (resort guests) or day-of (others)",
+          "cost": "$15-30/person/day",
+          "insider_tip": "Buy at park opening, prices increase later in day. Prioritize for Magic Kingdom and Hollywood Studios (longest waits)"
+        },
+        {
+          "item": "Individual Lightning Lane (ILL)",
+          "attractions": ["Seven Dwarfs Mine Train", "Tron", "Rise of the Resistance", "Flight of Passage"],
+          "window": "7am day-of",
+          "cost": "$15-25 per attraction",
+          "insider_tip": "Book immediately at 7am, popular rides sell out by 9am"
+        }
+      ],
+      "crowd_patterns": {
+        "busiest_days": ["Saturday", "Monday"],
+        "lightest_days": ["Tuesday", "Wednesday", "Thursday"],
+        "peak_seasons": ["Christmas-New Year", "Spring Break (March)", "Summer (June-Aug)", "Thanksgiving week"]
+      },
+      "transportation": {
+        "between_parks": "Disney bus (free, 20-45min wait) or Uber ($8-15, 10-15min)",
+        "to_disney_springs": "Bus from any resort/park (free)",
+        "insider_tip": "Uber between parks saves 30-60min vs Disney buses"
+      }
+    },
+    "orlando_universal": {
+      "name": "Universal Orlando Resort",
+      "required_apps": [
+        {
+          "name": "Universal Orlando App",
+          "purpose": "Express Pass, mobile food ordering, wait times",
+          "insider_tip": "Express Pass included free with onsite hotel stays (Portofino, Hard Rock, Royal Pacific)"
+        }
+      ]
+    }
+  },
+
+  "hotels": {
+    "disney_resorts": {
+      "early_entry": "30 minutes before official opening",
+      "extended_evening": "2 hours after close (select parks, select nights)",
+      "insider_tips": [
+        "Book dining reservations 60 days advance (vs 30 for off-site)",
+        "Free shuttle to all parks and Disney Springs",
+        "Mobile check-in available (skip front desk)"
+      ]
+    },
+    "four_seasons_orlando": {
+      "name": "Four Seasons Resort Orlando at Walt Disney World",
+      "checkin_time": "4:00 PM",
+      "insider_tips": [
+        "Request room with Magic Kingdom fireworks view (Tower rooms)",
+        "Complimentary shuttle to Disney parks (advance reservation required)",
+        "Ravello restaurant has character breakfast Thursdays",
+        "Spa is adults-only, book treatments when booking room for best availability"
+      ]
+    },
+    "walt_disney_world_dolphin": {
+      "name": "Walt Disney World Dolphin",
+      "checkin_time": "4:00 PM",
+      "insider_tips": [
+        "Walkable to EPCOT (10min) and Hollywood Studios (15min)",
+        "Not Disney-operated but gets Early Entry benefit",
+        "No MagicBands - use theme park tickets for room charging",
+        "Mobile check-in available via Bonvoy app"
+      ]
+    }
+  },
+
+  "restaurants": {
+    "narcoossees": {
+      "name": "Narcoossee's",
+      "location": "Grand Floridian Resort, Walt Disney World",
+      "cuisine": "Coastal seafood, premium steaks",
+      "signature_dishes": ["Butter-poached lobster", "Pan-seared sea scallops", "Filet mignon (off-menu available)"],
+      "dietary_accommodations": ["Gluten-free options available", "Vegan options with advance notice", "Allergy menus available"],
+      "insider_tips": [
+        "Request window table for Magic Kingdom fireworks view (9:15 PM nightly)",
+        "Arrive 10-15min early for best fireworks seating",
+        "Dress code: business casual (no tank tops or flip-flops)",
+        "Prix fixe menu available for easier ordering",
+        "Call 24-48h ahead to discuss dietary restrictions with chef"
+      ],
+      "reservation_window": "60 days for Disney resort guests, 30 days for others"
+    },
+    "the_edison": {
+      "name": "The Edison",
+      "location": "Disney Springs",
+      "cuisine": "American with 1920s industrial theme",
+      "signature_dishes": ["DJ Burgers", "Lobster mac & cheese", "Prime rib"],
+      "insider_tips": [
+        "Live entertainment nightly after 8 PM",
+        "Bar seating doesn't require reservations",
+        "Less crowded for lunch vs dinner"
+      ]
+    }
+  },
+
+  "activities": {
+    "mickeys_very_merry_christmas_party": {
+      "name": "Mickey's Very Merry Christmas Party",
+      "park": "Magic Kingdom",
+      "season": "November-December",
+      "hours": "7:00 PM - Midnight",
+      "insider_tips": [
+        "Separate ticket required ($149-$199)",
+        "Enter park at 4 PM with party ticket (3 extra hours)",
+        "Free cookies and hot chocolate at stations",
+        "Special parade at 8:15 PM and 11 PM",
+        "Fireworks at 9:15 PM (less crowded than regular night)",
+        "Snow on Main Street USA during fireworks",
+        "Character meet & greets with no regular park crowds"
+      ]
+    },
+    "disneys_animal_kingdom": {
+      "name": "Disney's Animal Kingdom Theme Park",
+      "insider_tips": [
+        "Arrive at rope drop for Flight of Passage (2hr waits by 10am)",
+        "Animals most active in morning and evening",
+        "Kilimanjaro Safaris best first thing morning or last hour before close",
+        "Download Genie+ and book Flight of Passage at 7am day-of",
+        "Bring poncho - afternoon rain common"
+      ]
+    }
+  },
+
+  "task_generation_patterns": {
+    "transportation_gaps": {
+      "trigger": "Flight arrival with no immediate hotel check-in method",
+      "action": "Suggest specific transportation with timing, cost, insider tip",
+      "example": "Book Uber from MCO to Four Seasons for 3:15 PM (flight lands 2:45 PM, allows 30min for bags). Use Level 2 pickup to avoid surge pricing. Estimated cost: $45-55."
+    },
+    "app_requirements": {
+      "trigger": "Disney/Universal park reservations without app",
+      "action": "List required app with specific deadline and reason",
+      "example": "Download My Disney Experience app by Dec 5 (7 days before arrival) to book Lightning Lane reservations at 7am starting Dec 12. Link ticket #123456 and resort confirmation #ABC789 in app."
+    },
+    "dietary_accommodations": {
+      "trigger": "Restaurant reservation at premium dining",
+      "action": "Proactive dietary confirmation call with specific timing",
+      "example": "Call Narcoossee's at 407-939-3463 by Dec 10 (48h before reservation) to confirm gluten-free options. Request chef consultation for celiac accommodation."
+    },
+    "advance_purchases": {
+      "trigger": "Theme park visit without advance purchases",
+      "action": "Recommend specific money/time-saving purchase with deadline",
+      "example": "Purchase Genie+ for Dec 12 Animal Kingdom visit at 7am on Dec 12. Priority: Book Flight of Passage first (sells out by 9am), then Expedition Everest. Expected cost: $25-30pp."
+    },
+    "insider_timing": {
+      "trigger": "Popular activity or restaurant with viewing opportunity",
+      "action": "Provide specific timing advantage",
+      "example": "Arrive at Narcoossee's by 8:45 PM (15min before 9pm reservation) to request window table for Magic Kingdom fireworks at 9:15 PM."
+    }
+  },
+
+  "future_learning_patterns": {
+    "description": "Patterns to learn from user interactions to reduce API calls",
+    "examples": [
+      {
+        "pattern": "Southwest flights always need 24h check-in reminder",
+        "learned_task": "Auto-generate check-in task at booking time"
+      },
+      {
+        "pattern": "Disney trips always need My Disney Experience app",
+        "learned_task": "Auto-generate app download task at booking time"
+      },
+      {
+        "pattern": "Airport to hotel always needs transportation",
+        "learned_task": "Auto-detect gap and suggest transport options"
+      },
+      {
+        "pattern": "Fine dining reservations need dietary confirmation",
+        "learned_task": "Auto-generate dietary call task 48h before"
+      }
+    ],
+    "agentic_evolution": "Future: KB learns from user completions, modifications, and deletions to refine task generation without API calls"
+  }
+}

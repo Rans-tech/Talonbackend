@@ -1,0 +1,96 @@
+    def generate_smart_tasks(self, trip_elements):
+        """Generate smart travel tasks from trip elements using GPT-4o"""
+        try:
+            print(f"Generating tasks for {len(trip_elements)} elements")
+
+            system_prompt = """You are an expert travel concierge who identifies gaps and provides insider tips.
+
+FOCUS ON SMART, NON-OBVIOUS TASKS:
+- Missing logistics (airport transfers, inter-venue transport)
+- Insider tips (apps, advance bookings, skip-the-line, discounts)
+- Specific timing based on actual itinerary
+- Proactive items travelers forget (dietary calls, mobile check-in, weather prep)
+- Money/time savers (early booking, bundled deals, crowd strategies)
+
+AVOID OBVIOUS TASKS like "pack clothes" or "check in for flight"
+
+GOOD EXAMPLES:
+- "Book Uber from MCO to Four Seasons for 3:15 PM (flight lands 2:45 PM)"
+- "Download My Disney Experience app and link tickets (required for Lightning Lane)"
+- "Reserve Genie+ for Animal Kingdom Dec 12 (high crowd forecast)"
+- "Call Narcoossee's to confirm seafood allergy accommodations"
+- "Pre-order mobile breakfast at Dolphin for 7 AM early park entry"
+
+Return ONLY valid JSON:
+{
+  "tasks": [
+    {
+      "title": "Specific actionable task",
+      "description": "Why it matters, what to do, insider tips",
+      "priority": "high|medium|low",
+      "category": "pre_trip|in_trip|dining|activities|return",
+      "due_date": "ISO datetime or null",
+      "trigger_condition": "Specific timing"
+    }
+  ]
+}"""
+
+            elements_summary = []
+            for el in trip_elements:
+                elements_summary.append({
+                    "type": el.get('type'),
+                    "title": el.get('title'),
+                    "start_datetime": el.get('start_datetime'),
+                    "end_datetime": el.get('end_datetime'),
+                    "location": el.get('location'),
+                    "confirmation_number": el.get('confirmation_number'),
+                    "details": el.get('details', {})
+                })
+
+            user_prompt = f"""Analyze this itinerary and generate 8-12 SMART tasks that fill gaps and provide insider value:
+
+{json.dumps(elements_summary, indent=2)}
+
+KEY QUESTIONS:
+- How do they get from airport to first hotel?
+- Any venue-specific apps/advance bookings needed?
+- Any dietary restrictions to confirm?
+- Any inter-venue transportation gaps?
+- Weather-specific prep for outdoor activities?
+- Advance purchase opportunities to save money/time?
+- Mobile check-in or digital ticketing setup needed?
+- Any crowd-beating strategies or skip-the-line options?
+
+Generate tasks showing REAL intelligence that save time/money/hassle."""
+
+            response = openai.chat.completions.create(
+                model="gpt-4o",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                temperature=0.7,
+                max_tokens=2000
+            )
+
+            response_text = response.choices[0].message.content.strip()
+
+            if response_text.startswith('```'):
+                response_text = response_text.split('```')[1]
+                if response_text.startswith('json'):
+                    response_text = response_text[4:]
+                response_text = response_text.strip()
+
+            parsed_data = json.loads(response_text)
+
+            return {
+                "success": True,
+                "tasks": parsed_data.get('tasks', [])
+            }
+
+        except Exception as e:
+            print(f"Error generating tasks: {e}")
+            return {
+                "success": False,
+                "error": str(e)
+            }
