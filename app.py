@@ -878,15 +878,37 @@ def upload_receipt(expense_id):
         file_extension = file_name.split('.')[-1] if '.' in file_name else 'jpg'
         unique_filename = f"{user_id}/{expense_id}_{uuid.uuid4().hex[:8]}.{file_extension}"
 
-        db_client.client.storage.from_('expense-receipts').upload(unique_filename, image_bytes, {'content-type': f'image/{file_extension}'})
+        # Upload to Supabase Storage with error checking
+        try:
+            upload_response = db_client.client.storage.from_('expense-receipts').upload(
+                unique_filename,
+                image_bytes,
+                {'content-type': f'image/{file_extension}', 'upsert': 'false'}
+            )
+
+            # Check if upload failed
+            if hasattr(upload_response, 'error') and upload_response.error:
+                error_msg = upload_response.error.message if hasattr(upload_response.error, 'message') else str(upload_response.error)
+                print(f"Storage upload error: {error_msg}")
+                return jsonify({'success': False, 'error': f'Storage upload failed: {error_msg}'}), 500
+
+        except Exception as storage_error:
+            print(f"Exception during storage upload: {str(storage_error)}")
+            return jsonify({'success': False, 'error': f'Storage exception: {str(storage_error)}'}), 500
+
+        # Get public URL only after successful upload
         public_url = db_client.client.storage.from_('expense-receipts').get_public_url(unique_filename)
 
+        # Update expense with receipt URL
         update_response = db_client.client.table('expenses').update({'receipt_image_url': public_url}).eq('id', expense_id).execute()
         if update_response.data:
+            print(f"Receipt uploaded successfully: {public_url}")
             return jsonify({'success': True, 'receipt_url': public_url, 'expense': update_response.data[0]})
         return jsonify({'success': False, 'error': 'Failed to update expense with receipt URL'}), 500
     except Exception as e:
         print(f"Error uploading receipt: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/api/receipts/parse', methods=['POST'])
