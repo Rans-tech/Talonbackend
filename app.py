@@ -778,7 +778,32 @@ def get_trip_expenses(trip_id):
     """Get all expenses for a trip"""
     try:
         response = db_client.client.table('expenses').select('*').eq('trip_id', trip_id).order('expense_date', desc=True).execute()
-        return jsonify({'success': True, 'expenses': response.data})
+        expenses = response.data
+
+        # Refresh signed URLs for receipts (in case they expired or are old public URLs)
+        for expense in expenses:
+            if expense.get('receipt_image_url'):
+                try:
+                    # Extract the file path from the URL
+                    # URL format: https://.../storage/v1/object/sign/expense-receipts/path/to/file.jpg?token=...
+                    # OR: https://.../storage/v1/object/public/expense-receipts/path/to/file.jpg
+                    url = expense['receipt_image_url']
+                    if '/expense-receipts/' in url:
+                        # Extract path after bucket name
+                        path_start = url.find('/expense-receipts/') + len('/expense-receipts/')
+                        path_end = url.find('?') if '?' in url else len(url)
+                        file_path = url[path_start:path_end]
+
+                        # Generate fresh signed URL (1 year expiration)
+                        signed_url_response = db_client.client.storage.from_('expense-receipts').create_signed_url(file_path, 31536000)
+                        signed_url = signed_url_response.get('signedURL') if isinstance(signed_url_response, dict) else signed_url_response
+                        expense['receipt_image_url'] = signed_url
+                except Exception as url_error:
+                    print(f"Error refreshing signed URL for expense {expense.get('id')}: {url_error}")
+                    # Keep the old URL if refresh fails
+                    pass
+
+        return jsonify({'success': True, 'expenses': expenses})
     except Exception as e:
         print(f"Error fetching expenses: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -896,14 +921,17 @@ def upload_receipt(expense_id):
             print(f"Exception during storage upload: {str(storage_error)}")
             return jsonify({'success': False, 'error': f'Storage exception: {str(storage_error)}'}), 500
 
-        # Get public URL only after successful upload
-        public_url = db_client.client.storage.from_('expense-receipts').get_public_url(unique_filename)
+        # Get signed URL for RLS-protected bucket (expires in 1 year = 31536000 seconds)
+        signed_url_response = db_client.client.storage.from_('expense-receipts').create_signed_url(unique_filename, 31536000)
+
+        # Extract the signed URL from response
+        signed_url = signed_url_response.get('signedURL') if isinstance(signed_url_response, dict) else signed_url_response
 
         # Update expense with receipt URL
-        update_response = db_client.client.table('expenses').update({'receipt_image_url': public_url}).eq('id', expense_id).execute()
+        update_response = db_client.client.table('expenses').update({'receipt_image_url': signed_url}).eq('id', expense_id).execute()
         if update_response.data:
-            print(f"Receipt uploaded successfully: {public_url}")
-            return jsonify({'success': True, 'receipt_url': public_url, 'expense': update_response.data[0]})
+            print(f"Receipt uploaded successfully: {signed_url}")
+            return jsonify({'success': True, 'receipt_url': signed_url, 'expense': update_response.data[0]})
         return jsonify({'success': False, 'error': 'Failed to update expense with receipt URL'}), 500
     except Exception as e:
         print(f"Error uploading receipt: {e}")
