@@ -939,6 +939,378 @@ def upload_receipt(expense_id):
         traceback.print_exc()
         return jsonify({'success': False, 'error': str(e)}), 500
 
+# ============================================================================
+# EXPENSE APPROVAL WORKFLOW ENDPOINTS
+# ============================================================================
+
+@app.route('/api/expenses/<expense_id>/submit', methods=['POST'])
+def submit_expense_for_approval(expense_id):
+    """Submit an expense for approval"""
+    try:
+        data = request.json
+        user_id = data.get('user_id')
+        organization_id = data.get('organization_id')
+        trip_id = data.get('trip_id')
+        submission_notes = data.get('notes', '')
+
+        if not user_id or not organization_id or not trip_id:
+            return jsonify({'success': False, 'error': 'Missing required fields'}), 400
+
+        # Get expense details
+        expense_response = db_client.client.table('expenses').select('*').eq('id', expense_id).single().execute()
+        if not expense_response.data:
+            return jsonify({'success': False, 'error': 'Expense not found'}), 404
+
+        expense = expense_response.data
+
+        # Check if already submitted
+        existing_submission = db_client.client.table('expense_submissions').select('*').eq('expense_id', expense_id).execute()
+        if existing_submission.data and len(existing_submission.data) > 0:
+            return jsonify({'success': False, 'error': 'Expense already submitted'}), 400
+
+        # Get organization settings
+        settings_response = db_client.client.table('expense_approval_settings').select('*').eq('organization_id', organization_id).single().execute()
+        settings = settings_response.data if settings_response.data else {}
+
+        # Determine if auto-approval applies
+        auto_approve_threshold = settings.get('auto_approve_below_amount', 0)
+        status = 'approved' if expense['amount'] < auto_approve_threshold else 'submitted'
+
+        # Create submission
+        submission_data = {
+            'expense_id': expense_id,
+            'trip_id': trip_id,
+            'organization_id': organization_id,
+            'submitted_by': user_id,
+            'submitted_amount': expense['amount'],
+            'submission_notes': submission_notes,
+            'status': status
+        }
+
+        if status == 'approved':
+            submission_data['approved_amount'] = expense['amount']
+            submission_data['approver_id'] = user_id
+            submission_data['approved_at'] = 'now()'
+            submission_data['approval_notes'] = 'Auto-approved'
+
+        submission_response = db_client.client.table('expense_submissions').insert(submission_data).execute()
+
+        if submission_response.data:
+            return jsonify({
+                'success': True,
+                'submission': submission_response.data[0],
+                'auto_approved': status == 'approved'
+            })
+
+        return jsonify({'success': False, 'error': 'Failed to create submission'}), 500
+
+    except Exception as e:
+        print(f"Error submitting expense: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/submissions/<submission_id>/approve', methods=['POST'])
+def approve_expense(submission_id):
+    """Approve an expense submission (Manager/Admin)"""
+    try:
+        data = request.json
+        approver_id = data.get('approver_id')
+        approved_amount = data.get('approved_amount')
+        approval_notes = data.get('notes', '')
+
+        if not approver_id:
+            return jsonify({'success': False, 'error': 'Missing approver_id'}), 400
+
+        # Get submission
+        submission_response = db_client.client.table('expense_submissions').select('*').eq('id', submission_id).single().execute()
+        if not submission_response.data:
+            return jsonify({'success': False, 'error': 'Submission not found'}), 404
+
+        submission = submission_response.data
+
+        # Verify submission is in submitted status
+        if submission['status'] != 'submitted':
+            return jsonify({'success': False, 'error': f'Cannot approve submission with status: {submission["status"]}'}), 400
+
+        # Use submitted amount if approved amount not provided
+        if approved_amount is None:
+            approved_amount = submission['submitted_amount']
+
+        # Update submission
+        update_data = {
+            'status': 'approved',
+            'approver_id': approver_id,
+            'approved_at': 'now()',
+            'approved_amount': approved_amount,
+            'approval_notes': approval_notes
+        }
+
+        update_response = db_client.client.table('expense_submissions').update(update_data).eq('id', submission_id).execute()
+
+        if update_response.data:
+            return jsonify({'success': True, 'submission': update_response.data[0]})
+
+        return jsonify({'success': False, 'error': 'Failed to approve submission'}), 500
+
+    except Exception as e:
+        print(f"Error approving expense: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/submissions/<submission_id>/reject', methods=['POST'])
+def reject_expense(submission_id):
+    """Reject an expense submission (Manager/Admin)"""
+    try:
+        data = request.json
+        approver_id = data.get('approver_id')
+        rejection_reason = data.get('reason', '')
+
+        if not approver_id:
+            return jsonify({'success': False, 'error': 'Missing approver_id'}), 400
+
+        if not rejection_reason:
+            return jsonify({'success': False, 'error': 'Rejection reason is required'}), 400
+
+        # Get submission
+        submission_response = db_client.client.table('expense_submissions').select('*').eq('id', submission_id).single().execute()
+        if not submission_response.data:
+            return jsonify({'success': False, 'error': 'Submission not found'}), 404
+
+        submission = submission_response.data
+
+        # Verify submission is in submitted status
+        if submission['status'] != 'submitted':
+            return jsonify({'success': False, 'error': f'Cannot reject submission with status: {submission["status"]}'}), 400
+
+        # Update submission
+        update_data = {
+            'status': 'rejected',
+            'approver_id': approver_id,
+            'approved_at': 'now()',
+            'rejection_reason': rejection_reason
+        }
+
+        update_response = db_client.client.table('expense_submissions').update(update_data).eq('id', submission_id).execute()
+
+        if update_response.data:
+            return jsonify({'success': True, 'submission': update_response.data[0]})
+
+        return jsonify({'success': False, 'error': 'Failed to reject submission'}), 500
+
+    except Exception as e:
+        print(f"Error rejecting expense: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/submissions/<submission_id>/reimburse', methods=['POST'])
+def reimburse_expense(submission_id):
+    """Mark expense as reimbursed (Admin only)"""
+    try:
+        data = request.json
+        reimbursed_by = data.get('reimbursed_by')
+        reimbursement_method = data.get('method', 'bank_transfer')
+        reimbursement_reference = data.get('reference', '')
+
+        if not reimbursed_by:
+            return jsonify({'success': False, 'error': 'Missing reimbursed_by'}), 400
+
+        # Get submission
+        submission_response = db_client.client.table('expense_submissions').select('*').eq('id', submission_id).single().execute()
+        if not submission_response.data:
+            return jsonify({'success': False, 'error': 'Submission not found'}), 404
+
+        submission = submission_response.data
+
+        # Verify submission is approved
+        if submission['status'] != 'approved':
+            return jsonify({'success': False, 'error': 'Can only reimburse approved expenses'}), 400
+
+        # Update submission
+        update_data = {
+            'status': 'reimbursed',
+            'reimbursed_by': reimbursed_by,
+            'reimbursed_at': 'now()',
+            'reimbursement_method': reimbursement_method,
+            'reimbursement_reference': reimbursement_reference
+        }
+
+        update_response = db_client.client.table('expense_submissions').update(update_data).eq('id', submission_id).execute()
+
+        if update_response.data:
+            return jsonify({'success': True, 'submission': update_response.data[0]})
+
+        return jsonify({'success': False, 'error': 'Failed to mark as reimbursed'}), 500
+
+    except Exception as e:
+        print(f"Error marking expense as reimbursed: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/approvals/pending', methods=['GET'])
+def get_pending_approvals():
+    """Get pending expense approvals for a manager or admin"""
+    try:
+        user_id = request.args.get('user_id')
+        organization_id = request.args.get('organization_id')
+
+        if not user_id or not organization_id:
+            return jsonify({'success': False, 'error': 'Missing required parameters'}), 400
+
+        # Get user's role in organization
+        member_response = db_client.client.table('organization_members').select('role, manager_id').eq('user_id', user_id).eq('organization_id', organization_id).single().execute()
+
+        if not member_response.data:
+            return jsonify({'success': False, 'error': 'User not found in organization'}), 404
+
+        role = member_response.data['role']
+
+        # Build query based on role
+        if role in ['owner', 'admin']:
+            # Admins see all pending submissions in org
+            submissions_response = db_client.client.table('expense_submissions').select('*, expenses(*), profiles!submitted_by(*)').eq('organization_id', organization_id).eq('status', 'submitted').order('submitted_at', desc=True).execute()
+        else:
+            # Managers see submissions from their direct reports
+            submissions_response = db_client.client.table('expense_submissions').select('*, expenses(*), profiles!submitted_by(*)').eq('organization_id', organization_id).eq('status', 'submitted').execute()
+
+            # Filter for direct reports
+            if submissions_response.data:
+                # Get team member IDs
+                team_response = db_client.client.table('organization_members').select('user_id').eq('manager_id', user_id).eq('organization_id', organization_id).eq('status', 'active').execute()
+                team_ids = [member['user_id'] for member in team_response.data] if team_response.data else []
+
+                # Filter submissions
+                submissions_response.data = [s for s in submissions_response.data if s['submitted_by'] in team_ids]
+
+        return jsonify({
+            'success': True,
+            'submissions': submissions_response.data if submissions_response.data else [],
+            'total': len(submissions_response.data) if submissions_response.data else 0
+        })
+
+    except Exception as e:
+        print(f"Error fetching pending approvals: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/submissions/my-history', methods=['GET'])
+def get_my_submission_history():
+    """Get submission history for the current user"""
+    try:
+        user_id = request.args.get('user_id')
+        organization_id = request.args.get('organization_id')
+
+        if not user_id:
+            return jsonify({'success': False, 'error': 'Missing user_id'}), 400
+
+        # Build query
+        query = db_client.client.table('expense_submissions').select('*, expenses(*), profiles!approver_id(*)').eq('submitted_by', user_id).order('submitted_at', desc=True)
+
+        if organization_id:
+            query = query.eq('organization_id', organization_id)
+
+        submissions_response = query.execute()
+
+        return jsonify({
+            'success': True,
+            'submissions': submissions_response.data if submissions_response.data else []
+        })
+
+    except Exception as e:
+        print(f"Error fetching submission history: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/organizations/<organization_id>/members/<user_id>/manager', methods=['PUT'])
+def assign_manager(organization_id, user_id):
+    """Assign a manager to an employee (Admin only)"""
+    try:
+        data = request.json
+        manager_id = data.get('manager_id')
+        department = data.get('department')
+
+        # Update organization member
+        update_data = {}
+        if manager_id is not None:
+            update_data['manager_id'] = manager_id
+        if department is not None:
+            update_data['department'] = department
+
+        if not update_data:
+            return jsonify({'success': False, 'error': 'No update data provided'}), 400
+
+        update_response = db_client.client.table('organization_members').update(update_data).eq('organization_id', organization_id).eq('user_id', user_id).execute()
+
+        if update_response.data:
+            return jsonify({'success': True, 'member': update_response.data[0]})
+
+        return jsonify({'success': False, 'error': 'Failed to update member'}), 500
+
+    except Exception as e:
+        print(f"Error assigning manager: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/organizations/<organization_id>/approval-settings', methods=['GET'])
+def get_approval_settings(organization_id):
+    """Get approval settings for an organization"""
+    try:
+        settings_response = db_client.client.table('expense_approval_settings').select('*').eq('organization_id', organization_id).single().execute()
+
+        if settings_response.data:
+            return jsonify({'success': True, 'settings': settings_response.data})
+
+        return jsonify({'success': False, 'error': 'Settings not found'}), 404
+
+    except Exception as e:
+        print(f"Error fetching approval settings: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/organizations/<organization_id>/approval-settings', methods=['PUT'])
+def update_approval_settings(organization_id):
+    """Update approval settings for an organization (Admin only)"""
+    try:
+        data = request.json
+
+        # Build update data
+        update_data = {}
+        allowed_fields = [
+            'require_approval', 'auto_approve_below_amount', 'require_admin_approval_above',
+            'require_receipt', 'require_receipt_above_amount', 'max_expense_age_days',
+            'notify_manager_on_submission', 'notify_submitter_on_decision'
+        ]
+
+        for field in allowed_fields:
+            if field in data:
+                update_data[field] = data[field]
+
+        if not update_data:
+            return jsonify({'success': False, 'error': 'No update data provided'}), 400
+
+        # Update settings
+        update_response = db_client.client.table('expense_approval_settings').update(update_data).eq('organization_id', organization_id).execute()
+
+        if update_response.data:
+            return jsonify({'success': True, 'settings': update_response.data[0]})
+
+        return jsonify({'success': False, 'error': 'Failed to update settings'}), 500
+
+    except Exception as e:
+        print(f"Error updating approval settings: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+# ============================================================================
+# END EXPENSE APPROVAL WORKFLOW ENDPOINTS
+# ============================================================================
+
 @app.route('/api/receipts/parse', methods=['POST'])
 def parse_receipt():
     """Parse receipt image and extract expense data"""
