@@ -4,6 +4,10 @@ from talon.agent import TalonAgent
 from talon.monitoring import WeatherMonitor, PriceMonitor
 from talon.document_parser import DocumentParser
 from talon.database import db_client
+from talon.insights_detector import InsightsDetector
+from talon.pattern_matcher import PatternMatcher
+from talon.insights_learning import InsightsLearning
+from talon.insights_ai import InsightsAI
 import os
 import base64
 import stripe
@@ -1552,4 +1556,282 @@ def clear_trip_tasks(trip_id):
         
     except Exception as e:
         print(f"Error clearing tasks: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# TALON Insights Endpoint
+# @route: POST /api/trips/:id/insights
+@app.route('/api/trips/<trip_id>/insights', methods=['POST', 'OPTIONS'])
+def get_trip_insights(trip_id):
+    """
+    Generate TALON Insights for a trip.
+    Returns actionable intelligence in 3 priority tiers:
+    - action_required: Critical issues that WILL cause problems
+    - recommendations: Optimizations to improve the trip
+    - good_to_know: Helpful context (usually empty)
+    """
+    # Handle OPTIONS preflight
+    if request.method == 'OPTIONS':
+        return '', 200
+
+    try:
+        # Get trip details
+        trip_response = db_client.client.table('trips').select('*').eq('id', trip_id).single().execute()
+        if not trip_response.data:
+            return jsonify({'success': False, 'error': 'Trip not found'}), 404
+
+        trip = trip_response.data
+
+        # Get all trip elements
+        elements_response = db_client.client.table('trip_elements').select('*').eq('trip_id', trip_id).execute()
+        elements = elements_response.data if elements_response.data else []
+
+        # Check if we have cached insights (1 hour cache)
+        cache_key = f"insights_{trip_id}"
+        # TODO: Implement Redis caching for production
+        # For now, generate fresh insights each time
+
+        # Run rule-based detection
+        detector = InsightsDetector(trip, elements)
+        base_insights = detector.analyze()
+
+        # Enhance with AI recommendations
+        ai = InsightsAI()
+        enhanced_insights = ai.analyze_itinerary(trip, elements, base_insights)
+
+        # Add metadata
+        result = {
+            'success': True,
+            'trip_id': trip_id,
+            'generated_at': str(db_client.client.postgrest.auth.now()) if hasattr(db_client.client.postgrest, 'auth') else None,
+            'insights': enhanced_insights,
+            'counts': {
+                'action_required': len(enhanced_insights.get('action_required', [])),
+                'recommendations': len(enhanced_insights.get('recommendations', [])),
+                'good_to_know': len(enhanced_insights.get('good_to_know', []))
+            }
+        }
+
+        return jsonify(result)
+
+    except Exception as e:
+        print(f"Error generating insights: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+# Learning Loop API Endpoints
+
+# @route: POST /api/insights/feedback
+@app.route('/api/insights/feedback', methods=['POST', 'OPTIONS'])
+def submit_insight_feedback():
+    """
+    Record user feedback on an insight.
+    Enables the self-learning loop.
+    """
+    if request.method == 'OPTIONS':
+        return '', 200
+
+    try:
+        from talon.insights_learning import InsightsLearning
+
+        data = request.json
+        user_id = data.get('user_id')  # TODO: Get from auth session
+        trip_id = data.get('trip_id')
+        insight_id = data.get('insight_id')
+        insight_type = data.get('insight_type')
+        insight_category = data.get('insight_category')
+        action_taken = data.get('action_taken')  # 'dismissed', 'acted', 'rated'
+
+        # Optional feedback fields
+        helpful = data.get('helpful')
+        accurate = data.get('accurate')
+        rating = data.get('rating')
+        user_comment = data.get('comment')
+        action_details = data.get('action_details', {})
+
+        # Trip context for learning
+        trip_context = data.get('trip_context', {})
+
+        if not all([user_id, trip_id, insight_id, insight_type, insight_category, action_taken]):
+            return jsonify({
+                'success': False,
+                'error': 'Missing required fields'
+            }), 400
+
+        # Record feedback
+        learning = InsightsLearning()
+        feedback = learning.record_feedback(
+            user_id=user_id,
+            trip_id=trip_id,
+            insight_id=insight_id,
+            insight_type=insight_type,
+            insight_category=insight_category,
+            action_taken=action_taken,
+            action_details=action_details,
+            helpful=helpful,
+            accurate=accurate,
+            rating=rating,
+            user_comment=user_comment,
+            trip_context=trip_context
+        )
+
+        return jsonify({
+            'success': True,
+            'feedback_id': feedback.get('id'),
+            'message': 'Feedback recorded - thank you for helping TALON learn!'
+        })
+
+    except Exception as e:
+        print(f"Error recording feedback: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# @route: GET /api/insights/patterns
+@app.route('/api/insights/patterns', methods=['GET'])
+def get_insight_patterns():
+    """
+    Get learned patterns and performance metrics.
+    Shows which insights are most/least helpful.
+    """
+    try:
+        category = request.args.get('category')
+
+        # Get patterns from database
+        query = db_client.client.table('insights_patterns').select('*')
+        if category:
+            query = query.eq('insight_category', category)
+
+        response = query.order('confidence_score', desc=True).execute()
+        patterns = response.data if response.data else []
+
+        return jsonify({
+            'success': True,
+            'patterns': patterns,
+            'count': len(patterns)
+        })
+
+    except Exception as e:
+        print(f"Error fetching patterns: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# @route: POST /api/insights/analyze-patterns
+@app.route('/api/insights/analyze-patterns', methods=['POST', 'OPTIONS'])
+def trigger_pattern_analysis():
+    """
+    Manually trigger pattern analysis.
+    Useful for testing or scheduled jobs.
+    """
+    if request.method == 'OPTIONS':
+        return '', 200
+
+    try:
+        from talon.insights_learning import InsightsLearning
+
+        data = request.json or {}
+        category = data.get('category')  # Optional: analyze specific category
+
+        learning = InsightsLearning()
+        results = learning.analyze_patterns(category)
+
+        return jsonify({
+            'success': True,
+            'analyzed_categories': len(results),
+            'results': results
+        })
+
+    except Exception as e:
+        print(f"Error analyzing patterns: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# @route: GET /api/kb/learnings
+@app.route('/api/kb/learnings', methods=['GET'])
+def get_kb_learnings():
+    """
+    Get pending learnings to be reviewed and added to Knowledge Base.
+    """
+    try:
+        from talon.insights_learning import InsightsLearning
+
+        status = request.args.get('status', 'pending')
+
+        query = db_client.client.table('kb_learnings').select('*')
+        if status:
+            query = query.eq('status', status)
+
+        response = query.order('confidence_score', desc=True).execute()
+        learnings = response.data if response.data else []
+
+        return jsonify({
+            'success': True,
+            'learnings': learnings,
+            'count': len(learnings)
+        })
+
+    except Exception as e:
+        print(f"Error fetching KB learnings: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# @route: POST /api/kb/update
+@app.route('/api/kb/update', methods=['POST', 'OPTIONS'])
+def update_knowledge_base():
+    """
+    Apply approved learnings to TALON_KNOWLEDGE_BASE.md.
+    Creates backup before updating.
+    """
+    if request.method == 'OPTIONS':
+        return '', 200
+
+    try:
+        from talon.kb_updater import KnowledgeBaseUpdater
+
+        data = request.json or {}
+        dry_run = data.get('dry_run', False)
+
+        updater = KnowledgeBaseUpdater()
+        result = updater.update_kb_with_learnings(dry_run=dry_run)
+
+        return jsonify({
+            'success': True,
+            'applied': result.get('applied', 0),
+            'learnings': result.get('learnings', []),
+            'dry_run': dry_run,
+            'message': f"Applied {result.get('applied', 0)} learnings to Knowledge Base" if not dry_run else "Dry run completed (no changes made)"
+        })
+
+    except Exception as e:
+        print(f"Error updating KB: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# @route: GET /api/kb/learning-report
+@app.route('/api/kb/learning-report', methods=['GET'])
+def get_learning_report():
+    """
+    Generate a summary report of all approved learnings.
+    Returns markdown format.
+    """
+    try:
+        from talon.kb_updater import KnowledgeBaseUpdater
+
+        updater = KnowledgeBaseUpdater()
+        report = updater.generate_learning_summary_report()
+
+        return jsonify({
+            'success': True,
+            'report': report,
+            'format': 'markdown'
+        })
+
+    except Exception as e:
+        print(f"Error generating report: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
