@@ -8,6 +8,7 @@ from talon.insights_detector import InsightsDetector
 from talon.pattern_matcher import PatternMatcher
 from talon.insights_learning import InsightsLearning
 from talon.insights_ai import InsightsAI
+from datetime import datetime
 import os
 import base64
 import stripe
@@ -1603,7 +1604,7 @@ def get_trip_insights(trip_id):
         result = {
             'success': True,
             'trip_id': trip_id,
-            'generated_at': str(db_client.client.postgrest.auth.now()) if hasattr(db_client.client.postgrest, 'auth') else None,
+            'generated_at': datetime.now().isoformat(),
             'insights': enhanced_insights,
             'counts': {
                 'action_required': len(enhanced_insights.get('action_required', [])),
