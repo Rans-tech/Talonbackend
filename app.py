@@ -1644,18 +1644,59 @@ def get_shared_trip_summary(share_token):
         if not trip_response.data:
             return jsonify({'success': False, 'error': 'Trip not found'}), 404
 
+
         trip = trip_response.data
+        print(f"[SUMMARY] Trip: {trip.get('name')}, Owner: {trip.get('user_id')}")
         
         # Get elements
         elements_response = db_client.client.table('trip_elements').select('*').eq('trip_id', trip_id).execute()
         elements = elements_response.data or []
         
-        # Get participants - simple query
+        # Get trip owner name FIRST
+        travelers = []
+        try:
+            owner_id = trip.get('user_id')
+            if owner_id:
+                owner_response = db_client.client.table('profiles').select('full_name').eq('user_id', owner_id).single().execute()
+                if owner_response.data and owner_response.data.get('full_name'):
+                    travelers.append(owner_response.data['full_name'])
+                    print(f"[SUMMARY] Added owner: {owner_response.data['full_name']}")
+        except Exception as e:
+            print(f"[SUMMARY] Owner error: {e}")
+        
+        # Get other participants
         try:
             participants_response = db_client.client.table('trip_participants').select('participant_name').eq('trip_id', trip_id).execute()
-            travelers = [p['participant_name'] for p in (participants_response.data or []) if p.get('participant_name')]
-        except:
-            travelers = []
+            for p in (participants_response.data or []):
+                if p.get('participant_name'):
+                    travelers.append(p['participant_name'])
+            print(f"[SUMMARY] All travelers: {travelers}")
+        except Exception as e:
+            print(f"[SUMMARY] Participants error: {e}")
+
+        # Get destination - smart detection
+        destination = trip.get('destination')
+        if not destination or destination == 'None' or destination.strip() == '':
+            trip_name = trip.get('name', '')
+            if 'San Diego' in trip_name:
+                destination = 'San Diego'
+            elif 'Orlando' in trip_name:
+                destination = 'Orlando'
+            elif 'Disney' in trip_name:
+                destination = 'Orlando'
+            else:
+                for e in elements:
+                    if e.get('type') in ['hotel', 'flight'] and e.get('location'):
+                        loc = e['location']
+                        if ',' in loc:
+                            parts = loc.split(',')
+                            destination = parts[-2].strip() if len(parts) > 1 else parts[0].strip()
+                            break
+        
+        if not destination or destination == 'None' or destination.strip() == '':
+            destination = 'an exciting destination'
+        
+        print(f"[SUMMARY] Destination: {destination}")
 
         # Duration
         from datetime import datetime
@@ -1668,7 +1709,7 @@ def get_shared_trip_summary(share_token):
                 end = datetime.strptime(e, '%Y-%m-%d')
                 duration_days = (end - start).days + 1
         except Exception as de:
-            print(f"[SUMMARY] Date parse error: {de}")
+            print(f"[SUMMARY] Date error: {de}")
 
         # Categorize
         activities = [e['title'] for e in elements if e.get('type') == 'activity' and e.get('title')][:3]
@@ -1683,7 +1724,7 @@ def get_shared_trip_summary(share_token):
         dining_str = ', '.join(dining) if dining else 'great restaurants'
 
         prompt = f"""Write a fun 2-sentence trip summary:
-{traveler_str} heading to {trip.get('destination', 'an exciting destination')} for {duration_days} days
+{traveler_str} heading to {destination} for {duration_days} days
 Activities: {activity_str}
 Dining: {dining_str}
 
