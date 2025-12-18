@@ -1621,6 +1621,66 @@ def get_trip_insights(trip_id):
         traceback.print_exc()
         return jsonify({'success': False, 'error': str(e)}), 500
 
+
+# Auto-Update Trip Dates from Timeline
+# @route: POST /api/trips/:trip_id/auto-update-dates
+@app.route('/api/trips/<trip_id>/auto-update-dates', methods=['POST', 'OPTIONS'])
+def auto_update_trip_dates(trip_id):
+    """Auto-detect and update trip dates from timeline elements"""
+    if request.method == 'OPTIONS':
+        return '', 200
+    
+    try:
+        # Verify authentication
+        auth_header = request.headers.get('Authorization')
+        if not auth_header:
+            return jsonify({'success': False, 'error': 'No authorization header'}), 401
+        
+        # Get all trip elements with dates
+        elements_response = db_client.client.table('trip_elements').select('start_datetime').eq('trip_id', trip_id).not_('start_datetime', 'is', 'null').execute()
+        
+        if not elements_response.data or len(elements_response.data) == 0:
+            return jsonify({'success': False, 'error': 'No timeline elements with dates found'}), 400
+        
+        # Find earliest and latest dates
+        from datetime import datetime
+        dates = [datetime.fromisoformat(el['start_datetime'].replace('Z', '+00:00')) for el in elements_response.data]
+        earliest = min(dates)
+        latest = max(dates)
+        
+        start_date = earliest.strftime('%Y-%m-%d')
+        end_date = latest.strftime('%Y-%m-%d')
+        
+        print(f"[AUTO-UPDATE] Trip {trip_id}: {start_date} to {end_date}")
+        
+        # Update using service role to bypass RLS
+        from supabase import create_client
+        service_client = create_client(
+            os.getenv('SUPABASE_URL'),
+            os.getenv('SUPABASE_SERVICE_ROLE_KEY')
+        )
+        
+        update_response = service_client.table('trips').update({
+            'start_date': start_date,
+            'end_date': end_date
+        }).eq('id', trip_id).execute()
+        
+        if update_response.data:
+            return jsonify({
+                'success': True,
+                'trip': update_response.data[0],
+                'start_date': start_date,
+                'end_date': end_date
+            })
+        else:
+            return jsonify({'success': False, 'error': 'Failed to update trip'}), 500
+            
+    except Exception as e:
+        print(f"[AUTO-UPDATE] Error: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 # Trip Summary for Shared Trips
 # @route: GET /api/trips/shared/:token/summary
 @app.route('/api/trips/shared/<share_token>/summary', methods=['GET', 'OPTIONS'])
