@@ -38,6 +38,7 @@ class InsightsDetector:
         # RECOMMENDATIONS - Optimization opportunities
         recommendations.extend(self._detect_tight_timing())
         recommendations.extend(self._detect_missing_meals())
+        recommendations.extend(self._detect_trip_dates_timeline_mismatch())
 
         # GOOD TO KNOW - Usually empty, only extreme conditions
         # (These will be populated by AI analysis)
@@ -311,3 +312,77 @@ class InsightsDetector:
         except (ValueError, AttributeError) as e:
             logger.warning(f"Failed to parse datetime: {dt_string} - {e}")
             return None
+
+    def _detect_trip_dates_timeline_mismatch(self) -> List[Dict[str, Any]]:
+        """
+        Detect if trip dates (start_date/end_date) don't match earliest/latest timeline events.
+        Flags when:
+        - Earliest event is BEFORE trip start date
+        - Latest event is AFTER trip end date
+        """
+        insights = []
+
+        if not self.elements:
+            return insights
+
+        trip_start = self._parse_datetime(self.trip.get('start_date'))
+        trip_end = self._parse_datetime(self.trip.get('end_date'))
+
+        if not trip_start or not trip_end:
+            return insights
+
+        # Find earliest and latest event times from ALL elements
+        event_times = []
+        for element in self.elements:
+            if element.get('start_time'):
+                parsed = self._parse_datetime(element['start_time'])
+                if parsed:
+                    event_times.append(parsed)
+            if element.get('end_time'):
+                parsed = self._parse_datetime(element['end_time'])
+                if parsed:
+                    event_times.append(parsed)
+
+        if not event_times:
+            return insights
+
+        earliest_event = min(event_times)
+        latest_event = max(event_times)
+
+        # Normalize to dates only for comparison (ignore time component)
+        trip_start_date = trip_start.replace(hour=0, minute=0, second=0, microsecond=0)
+        trip_end_date = trip_end.replace(hour=23, minute=59, second=59, microsecond=0)
+        earliest_event_date = earliest_event.replace(hour=0, minute=0, second=0, microsecond=0)
+        latest_event_date = latest_event.replace(hour=0, minute=0, second=0, microsecond=0)
+
+        # Check if earliest event is before trip start
+        if earliest_event_date < trip_start_date:
+            days_before = (trip_start_date - earliest_event_date).days
+            insights.append({
+                'id': 'trip_dates_mismatch_start',
+                'type': 'date_mismatch',
+                'severity': 'warning',
+                'title': 'Trip start date doesn\'t match timeline',
+                'description': f'Your trip is set to start {trip_start.strftime("%b %d")} but your earliest event is on {earliest_event.strftime("%b %d")} ({days_before} day{"s" if days_before > 1 else ""} earlier). Update your trip dates to match your timeline.',
+                'actions': [
+                    {'label': 'Edit Trip Dates', 'action': 'edit_trip', 'params': {'suggested_start': earliest_event_date.strftime('%Y-%m-%d')}},
+                    {'label': 'Dismiss', 'action': 'dismiss', 'params': {}}
+                ]
+            })
+
+        # Check if latest event is after trip end
+        if latest_event_date > trip_end_date:
+            days_after = (latest_event_date - trip_end_date).days
+            insights.append({
+                'id': 'trip_dates_mismatch_end',
+                'type': 'date_mismatch',
+                'severity': 'warning',
+                'title': 'Trip end date doesn\'t match timeline',
+                'description': f'Your trip is set to end {trip_end.strftime("%b %d")} but your latest event is on {latest_event.strftime("%b %d")} ({days_after} day{"s" if days_after > 1 else ""} later). Update your trip dates to match your timeline.',
+                'actions': [
+                    {'label': 'Edit Trip Dates', 'action': 'edit_trip', 'params': {'suggested_end': latest_event_date.strftime('%Y-%m-%d')}},
+                    {'label': 'Dismiss', 'action': 'dismiss', 'params': {}}
+                ]
+            })
+
+        return insights
