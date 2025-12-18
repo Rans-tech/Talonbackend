@@ -1656,13 +1656,31 @@ def get_shared_trip_summary(share_token):
         travelers = []
         try:
             owner_id = trip.get('user_id')
+            print(f"[SUMMARY] Looking up owner: {owner_id}")
             if owner_id:
-                owner_response = db_client.client.table('profiles').select('full_name').eq('user_id', owner_id).single().execute()
-                if owner_response.data and owner_response.data.get('full_name'):
-                    travelers.append(owner_response.data['full_name'])
-                    print(f"[SUMMARY] Added owner: {owner_response.data['full_name']}")
+                # Try to get profile with full_name or email
+                owner_response = db_client.client.table('profiles').select('full_name, email').eq('user_id', owner_id).single().execute()
+                print(f"[SUMMARY] Profile response: {owner_response.data}")
+                
+                if owner_response.data:
+                    owner_name = owner_response.data.get('full_name')
+                    if not owner_name or owner_name.strip() == '':
+                        # Fallback to email username
+                        email = owner_response.data.get('email', '')
+                        if email:
+                            owner_name = email.split('@')[0].title()
+                    
+                    if owner_name and owner_name.strip():
+                        travelers.append(owner_name)
+                        print(f"[SUMMARY] Added owner: {owner_name}")
+                    else:
+                        print(f"[SUMMARY] No owner name found")
+                else:
+                    print(f"[SUMMARY] No profile data for owner")
         except Exception as e:
             print(f"[SUMMARY] Owner error: {e}")
+            import traceback
+            traceback.print_exc()
         
         # Get other participants
         try:
