@@ -1621,6 +1621,113 @@ def get_trip_insights(trip_id):
         traceback.print_exc()
         return jsonify({'success': False, 'error': str(e)}), 500
 
+# Trip Summary for Shared Trips
+# @route: GET /api/trips/shared/:token/summary
+@app.route('/api/trips/shared/<share_token>/summary', methods=['GET', 'OPTIONS'])
+def get_shared_trip_summary(share_token):
+    """
+    Generate a fun, engaging AI summary for a shared trip.
+    Returns a narrative-style description of the trip with travelers, destination, activities, and dining.
+    """
+    if request.method == 'OPTIONS':
+        return '', 200
+
+    try:
+        # Get the share record
+        share_response = db_client.client.table('trip_shares').select('*').eq('share_token', share_token).eq('is_active', True).single().execute()
+        if not share_response.data:
+            return jsonify({'success': False, 'error': 'Share link not found or inactive'}), 404
+
+        share = share_response.data
+        trip_id = share['trip_id']
+
+        # Get trip details
+        trip_response = db_client.client.table('trips').select('*').eq('id', trip_id).single().execute()
+        if not trip_response.data:
+            return jsonify({'success': False, 'error': 'Trip not found'}), 404
+
+        trip = trip_response.data
+
+        # Get trip elements
+        elements_response = db_client.client.table('trip_elements').select('*').eq('trip_id', trip_id).execute()
+        elements = elements_response.data if elements_response.data else []
+
+        # Get trip participants
+        participants_response = db_client.client.table('trip_participants').select('*, profiles:user_id(full_name)').eq('trip_id', trip_id).execute()
+        participants = participants_response.data if participants_response.data else []
+
+        # Extract participant names
+        traveler_names = []
+        for p in participants:
+            if p.get('profiles') and p['profiles'].get('full_name'):
+                traveler_names.append(p['profiles']['full_name'])
+            elif p.get('participant_name'):
+                traveler_names.append(p['participant_name'])
+
+        # Calculate trip duration
+        from datetime import datetime
+        start = datetime.fromisoformat(trip['start_date'].replace('Z', '+00:00')) if trip.get('start_date') else None
+        end = datetime.fromisoformat(trip['end_date'].replace('Z', '+00:00')) if trip.get('end_date') else None
+        duration_days = (end - start).days + 1 if start and end else None
+
+        # Categorize elements
+        activities = [e for e in elements if e['type'] == 'activity']
+        dining = [e for e in elements if e['type'] == 'dining']
+        flights = [e for e in elements if e['type'] == 'flight']
+        hotels = [e for e in elements if e['type'] in ['accommodation', 'hotel']]
+
+        # Generate AI summary using OpenAI
+        from openai import OpenAI
+        client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+
+        # Build prompt
+        prompt = f"""Generate a fun, engaging, narrative-style trip summary for this shared trip.
+
+Trip Details:
+- Trip Name: {trip.get('name', 'Adventure')}
+- Destination: {trip.get('destination', 'exciting destination')}
+- Duration: {duration_days} days
+- Travelers: {', '.join(traveler_names) if traveler_names else 'adventurers'}
+
+Trip Elements:
+- Flights: {len(flights)} flights
+- Accommodations: {len(hotels)} stays
+- Activities: {', '.join([a['title'] for a in activities[:5]])} {'and more' if len(activities) > 5 else ''}
+- Dining: {', '.join([d['title'] for d in dining[:5]])} {'and more' if len(dining) > 5 else ''}
+
+Write a fun, engaging 2-3 sentence summary in this style:
+"[Traveler names] are heading to [destination] for a [X]-day [trip type/vibe] with [highlight 2-3 exciting activities/experiences] and dining at [1-2 notable restaurants]."
+
+Make it sound exciting and inviting! Use natural language, not a list. Focus on the most interesting elements."""
+
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": "You are a fun, enthusiastic travel writer who creates engaging trip summaries. Write in a natural, conversational style that makes people excited about the trip."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.7,
+            max_tokens=200
+        )
+
+        summary = response.choices[0].message.content.strip()
+
+        return jsonify({
+            'success': True,
+            'summary': summary,
+            'trip_name': trip.get('name'),
+            'destination': trip.get('destination'),
+            'duration_days': duration_days,
+            'travelers': traveler_names
+        })
+
+    except Exception as e:
+        print(f"Error generating trip summary: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 # Learning Loop API Endpoints
 
 # @route: POST /api/insights/feedback
