@@ -19,23 +19,30 @@ class WeatherMonitor:
 
     def _geocode_location(self, location: str) -> tuple:
         """Convert location name to lat/lon coordinates."""
-        try:
-            params = {"name": location, "count": 1, "language": "en", "format": "json"}
-            response = requests.get(self.geocode_url, params=params, timeout=10)
-            response.raise_for_status()
-            data = response.json()
+        # Try city name first (most reliable), then full string
+        search_terms = []
+        if "," in location:
+            search_terms.append(location.split(",")[0].strip())
+        search_terms.append(location)
 
-            if "results" in data and len(data["results"]) > 0:
-                result = data["results"][0]
-                admin1 = result.get("admin1", "")
-                name = result.get("name", location)
-                resolved = f"{name}, {admin1}" if admin1 else name
-                return (result["latitude"], result["longitude"], resolved)
-            return None, None, None
-        except Exception as e:
-            logger.error(f"Geocoding error for {location}: {e}")
-            return None, None, None
+        for search_term in search_terms:
+            try:
+                params = {"name": search_term, "count": 1, "language": "en", "format": "json"}
+                response = requests.get(self.geocode_url, params=params, timeout=10)
+                response.raise_for_status()
+                data = response.json()
 
+                if "results" in data and len(data["results"]) > 0:
+                    result = data["results"][0]
+                    admin1 = result.get("admin1", "")
+                    name = result.get("name", search_term)
+                    resolved = f"{name}, {admin1}" if admin1 else name
+                    return (result["latitude"], result["longitude"], resolved)
+            except Exception as e:
+                logger.error(f"Geocoding error for {search_term}: {e}")
+                continue
+
+        return None, None, None
     def get_status(self, location: str = "Orlando, FL") -> dict:
         """Fetches current weather data from Open-Meteo API."""
         lat, lon, resolved_name = self._geocode_location(location)
