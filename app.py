@@ -1719,7 +1719,7 @@ def get_shared_trip_summary(share_token):
             print(f"[SUMMARY] Looking up owner: {owner_id}")
             if owner_id:
                 # Try to get profile with full_name or email
-                owner_response = db_client.client.table('profiles').select('full_name, email').eq('user_id', owner_id).single().execute()
+                owner_response = db_client.client.table('profiles').select('full_name, email').eq('id', owner_id).single().execute()
                 print(f"[SUMMARY] Profile response: {owner_response.data}")
                 
                 if owner_response.data:
@@ -1744,8 +1744,11 @@ def get_shared_trip_summary(share_token):
         
         # Get other participants
         try:
-            participants_response = db_client.client.table('trip_participants').select('participant_name').eq('trip_id', trip_id).execute()
+            participants_response = db_client.client.table('trip_participants').select('participant_name, is_trip_owner').eq('trip_id', trip_id).execute()
             for p in (participants_response.data or []):
+                # Skip owner - already added from profiles lookup above
+                if p.get('is_trip_owner'):
+                    continue
                 if p.get('participant_name'):
                     travelers.append(p['participant_name'])
             print(f"[SUMMARY] All travelers: {travelers}")
