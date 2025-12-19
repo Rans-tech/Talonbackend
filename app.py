@@ -1858,8 +1858,8 @@ def get_shared_trip_summary(share_token):
         context_parts.append(f"Travelers: {traveler_str}")
         context_parts.append(f"Destination: {destination}")
         context_parts.append(f"Duration: {duration_days} days")
-        if travel_month and start_date:
-            context_parts.append(f"Travel month: {start_date.strftime('%B')}")
+        if start_date and end_date:
+            context_parts.append(f"Trip dates: {start_date.strftime('%B %d, %Y')} to {end_date.strftime('%B %d, %Y')}")
         if hotel_str:
             context_parts.append(f"Hotels: {hotel_str}")
         if activity_str:
