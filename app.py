@@ -1780,49 +1780,128 @@ def get_shared_trip_summary(share_token):
         print(f"[SUMMARY] Destination: {destination}")
 
         # Duration
+        # Duration and travel dates
         from datetime import datetime
         duration_days = 7
+        travel_month = None
+        start_date = None
+        end_date = None
         try:
             if trip.get('start_date') and trip.get('end_date'):
                 s = str(trip['start_date']).split('T')[0]
                 e = str(trip['end_date']).split('T')[0]
-                start = datetime.strptime(s, '%Y-%m-%d')
-                end = datetime.strptime(e, '%Y-%m-%d')
-                duration_days = (end - start).days + 1
+                start_date = datetime.strptime(s, '%Y-%m-%d')
+                end_date = datetime.strptime(e, '%Y-%m-%d')
+                duration_days = (end_date - start_date).days + 1
+                travel_month = start_date.month
         except Exception as de:
             print(f"[SUMMARY] Date error: {de}")
 
-        # Categorize
-        activities = [e['title'] for e in elements if e.get('type') == 'activity' and e.get('title')][:3]
-        dining = [e['title'] for e in elements if e.get('type') == 'dining' and e.get('title')][:2]
+        # Detect holidays in trip dates
+        holidays = []
+        if start_date and end_date:
+            year = start_date.year
+            holiday_dates = {
+                'New Year\'s Eve': datetime(year, 12, 31),
+                'New Year\'s Day': datetime(year, 1, 1),
+                'Christmas': datetime(year, 12, 25),
+                'Thanksgiving': datetime(year, 11, 28),
+                'Fourth of July': datetime(year, 7, 4),
+            }
+            for holiday_name, holiday_date in holiday_dates.items():
+                if start_date <= holiday_date <= end_date:
+                    holidays.append(holiday_name)
+            # Check next year for NYE trips
+            if start_date.month == 12:
+                if start_date <= datetime(year, 12, 31) <= end_date:
+                    if 'New Year\'s Eve' not in holidays:
+                        holidays.append('New Year\'s Eve')
+                next_year_start = datetime(year + 1, 1, 1)
+                if next_year_start <= end_date:
+                    if 'New Year\'s Day' not in holidays:
+                        holidays.append('New Year\'s Day')
 
-        # Build prompt
+        # Categorize elements - extract more detail
+        activities = [el['title'] for el in elements if el.get('type') == 'activity' and el.get('title')][:4]
+        dining = [el['title'] for el in elements if el.get('type') == 'dining' and el.get('title')][:3]
+        hotels = [el['title'] for el in elements if el.get('type') == 'hotel' and el.get('title')][:2]
+
+        # Count days with events to detect downtime
+        days_with_events = set()
+        for el in elements:
+            if el.get('start_datetime'):
+                try:
+                    el_date = datetime.strptime(str(el['start_datetime']).split('T')[0], '%Y-%m-%d')
+                    days_with_events.add(el_date.date())
+                except:
+                    pass
+
+        busy_days = len(days_with_events)
+        free_days = max(0, duration_days - busy_days)
+        has_downtime = free_days >= 2 or (duration_days >= 5 and busy_days < duration_days * 0.7)
+
+        print(f"[SUMMARY] Hotels: {hotels}, Activities: {activities}, Dining: {dining}")
+        print(f"[SUMMARY] Holidays: {holidays}, Downtime: {has_downtime} ({free_days} free days)")
+
+        # Build enhanced prompt
         from openai import OpenAI
         client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
 
         traveler_str = ', '.join(travelers) if travelers else 'travelers'
-        activity_str = ', '.join(activities) if activities else 'exciting activities'
-        dining_str = ', '.join(dining) if dining else 'great restaurants'
+        activity_str = ', '.join(activities) if activities else None
+        dining_str = ', '.join(dining) if dining else None
+        hotel_str = ', '.join(hotels) if hotels else None
+        holiday_str = ' and '.join(holidays) if holidays else None
 
-        prompt = f"""Write a fun 2-sentence trip summary:
-{traveler_str} heading to {destination} for {duration_days} days
-Activities: {activity_str}
-Dining: {dining_str}
+        # Build context
+        context_parts = []
+        context_parts.append(f"Travelers: {traveler_str}")
+        context_parts.append(f"Destination: {destination}")
+        context_parts.append(f"Duration: {duration_days} days")
+        if travel_month and start_date:
+            context_parts.append(f"Travel month: {start_date.strftime('%B')}")
+        if hotel_str:
+            context_parts.append(f"Hotels: {hotel_str}")
+        if activity_str:
+            context_parts.append(f"Activities: {activity_str}")
+        if dining_str:
+            context_parts.append(f"Dining: {dining_str}")
+        if holiday_str:
+            context_parts.append(f"Holidays during trip: {holiday_str}")
+        if has_downtime:
+            context_parts.append(f"Note: Trip includes {free_days}+ days of unstructured relaxation time")
 
-Style: "[Names] are heading to [place] for a [X]-day adventure featuring [activities] and dining at [restaurants]." Make it exciting!"""
+        context = '\n'.join(context_parts)
+
+        prompt = f"""Write an engaging, evocative 3-4 sentence trip summary for sharing with friends/family.
+
+TRIP DETAILS:
+{context}
+
+REQUIREMENTS:
+1. Start with travelers' names (use nicknames if apparent, like "Roxy" for Scarlett)
+2. Include weather context for the destination and travel month (e.g., "mild sunny days in the mid-60s" for San Diego in winter, "warm tropical breezes" for Hawaii)
+3. If notable hotels exist, mention them by name (e.g., "luxurious stay at the legendary Hotel del Coronado")
+4. Highlight balance of adventure AND relaxation/downtime if applicable
+5. Use sensory, inviting language (sparkling beaches, ocean breezes, festive vibes)
+6. If holidays fall during the trip, weave them in naturally (e.g., "ring in the New Year...")
+7. End with an exciting hook
+
+TONE: Warm, playful, inviting - like a friend sharing their upcoming adventure.
+Keep it concise but vivid - 3-4 sentences max."""
 
         response = client.chat.completions.create(
             model="gpt-4o",
             messages=[
-                {"role": "system", "content": "You are a fun travel writer. Write engaging 2-sentence trip summaries."},
+                {"role": "system", "content": "You are a talented travel writer who creates warm, vivid trip summaries. You know weather patterns for popular destinations and craft engaging narratives that make readers wish they were coming along."},
                 {"role": "user", "content": prompt}
             ],
-            temperature=0.7,
-            max_tokens=150
+            temperature=0.8,
+            max_tokens=250
         )
 
         summary = response.choices[0].message.content.strip()
-        print(f"[SUMMARY] Success!")
+        print(f"[SUMMARY] Success: {summary[:100]}...")
 
         return jsonify({
             'success': True,
@@ -1830,7 +1909,9 @@ Style: "[Names] are heading to [place] for a [X]-day adventure featuring [activi
             'trip_name': trip.get('name'),
             'destination': trip.get('destination'),
             'duration_days': duration_days,
-            'travelers': travelers
+            'travelers': travelers,
+            'hotels': hotels,
+            'holidays': holidays
         })
 
     except Exception as e:
