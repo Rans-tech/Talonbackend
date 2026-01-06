@@ -9,7 +9,6 @@ class SupabaseDB:
         url: str = os.environ.get("SUPABASE_URL", "").strip()
         key: str = os.environ.get("SUPABASE_KEY", "").strip()
 
-        # Debug logging
         print(f"Supabase URL length: {len(url)}")
         print(f"Supabase URL (first 30 chars): {url[:30] if url else 'EMPTY'}")
         print(f"Supabase KEY length: {len(key)}")
@@ -21,7 +20,6 @@ class SupabaseDB:
         self.client: Client = create_client(url, key)
 
     def get_user_profile(self, user_id):
-        """Fetches a user profile from the database."""
         try:
             response = self.client.table('profiles').select("*").eq('id', user_id).execute()
             return response.data
@@ -30,7 +28,6 @@ class SupabaseDB:
             return None
 
     def update_trip_data(self, trip_id, data):
-        """Updates trip data in the database."""
         try:
             response = self.client.table('trips').update(data).eq('id', trip_id).execute()
             return response.data
@@ -39,54 +36,35 @@ class SupabaseDB:
             return None
 
     def check_duplicate_element(self, trip_id, element_data):
-        """Check if an element with the same key details already exists for this trip.
-
-        For flights: Check confirmation + flight details + date (allow multiple flights with same confirmation)
-        For hotels/other: Check confirmation only (don't allow duplicates)
-        """
         confirmation_number = element_data.get('confirmation_number')
         if not confirmation_number:
             return None
-
         try:
             element_type = element_data.get('type')
-
-            # For flights, be more specific - same confirmation can have multiple flights
             if element_type == 'flight':
-                # Check for exact match: same confirmation AND same start time AND same location
                 start_datetime = element_data.get('start_datetime')
-                location = element_data.get('location')
-
                 if not start_datetime:
-                    return None  # Can't check duplicates without date
-
+                    return None
                 response = self.client.table('trip_elements').select("*").eq('trip_id', trip_id).eq('type', 'flight').eq('confirmation_number', confirmation_number).eq('start_datetime', start_datetime).execute()
-
-                # If we find a flight with same confirmation AND same departure time, it's a duplicate
                 if response.data and len(response.data) > 0:
                     return response.data[0]
                 return None
             else:
-                # For non-flights (hotel, car, etc), confirmation number alone is enough
                 response = self.client.table('trip_elements').select("*").eq('trip_id', trip_id).eq('confirmation_number', confirmation_number).execute()
                 return response.data[0] if response.data else None
-
         except Exception as e:
             print(f"Error checking duplicate: {e}")
             return None
 
     def create_trip_element(self, trip_id, element_data):
-        """Creates a new trip element in the database."""
         try:
-            # Check for duplicate based on element type
             confirmation_number = element_data.get('confirmation_number')
             if confirmation_number:
                 existing = self.check_duplicate_element(trip_id, element_data)
                 if existing:
                     print(f"Duplicate found: {element_data.get('type')} with confirmation #{confirmation_number} already exists")
-                    return existing  # Return existing element instead of creating duplicate
+                    return existing
 
-            # Prepare the data for insertion
             insert_data = {
                 'trip_id': trip_id,
                 'type': element_data.get('type'),
@@ -99,7 +77,6 @@ class SupabaseDB:
                 'status': element_data.get('status', 'confirmed'),
                 'details': element_data.get('details', {})
             }
-
             response = self.client.table('trip_elements').insert(insert_data).execute()
             return response.data[0] if response.data else None
         except Exception as e:
@@ -107,18 +84,14 @@ class SupabaseDB:
             return None
 
     def update_trip_document(self, document_id, element_id):
-        """Links a document to a trip element."""
         try:
-            response = self.client.table('trip_documents').update({
-                'trip_element_id': element_id
-            }).eq('id', document_id).execute()
+            response = self.client.table('trip_documents').update({'trip_element_id': element_id}).eq('id', document_id).execute()
             return response.data
         except Exception as e:
             print(f"Error updating trip document: {e}")
             return None
 
     def get_trip(self, trip_id):
-        """Fetches a trip from the database."""
         try:
             response = self.client.table('trips').select("*").eq('id', trip_id).execute()
             return response.data[0] if response.data else None
@@ -126,5 +99,61 @@ class SupabaseDB:
             print(f"Error fetching trip: {e}")
             return None
 
-# Initialize a single instance for the app to use
+    def create_expense_from_element(self, trip_id, user_id, element_data, element_id):
+        """Creates an expense record linked to a trip element."""
+        try:
+            price = element_data.get('price')
+            if not price or price <= 0:
+                return None
+
+            element_type = element_data.get('type', 'other')
+            category_map = {
+                'flight': 'flight',
+                'hotel': 'accommodation',
+                'dining': 'food_dining',
+                'activity': 'tours_activities',
+                'transport': 'transportation',
+                'car': 'transportation',
+                'other': 'other'
+            }
+            category = category_map.get(element_type, 'other')
+
+            expense_date = element_data.get('start_datetime')
+            if expense_date:
+                expense_date = expense_date[:10] if len(expense_date) > 10 else expense_date
+            else:
+                from datetime import date
+                expense_date = date.today().isoformat()
+
+            conf_num = element_data.get('confirmation_number', 'N/A')
+            expense_data = {
+                'trip_id': trip_id,
+                'user_id': user_id,
+                'amount': price,
+                'category': category,
+                'description': element_data.get('title', ''),
+                'expense_date': expense_date,
+                'notes': "Auto-created from parsed document. Confirmation: " + str(conf_num),
+                'source': 'parsed',
+                'trip_element_id': element_id
+            }
+
+            response = self.client.table('expenses').insert(expense_data).execute()
+            if response.data:
+                print(f"Created expense for element {element_id}: ${price} ({category})")
+                return response.data[0]
+            return None
+        except Exception as e:
+            print(f"Error creating expense from element: {e}")
+            return None
+
+    def check_expense_exists_for_element(self, element_id):
+        """Check if an expense already exists for a trip element."""
+        try:
+            response = self.client.table('expenses').select('id').eq('trip_element_id', element_id).execute()
+            return len(response.data) > 0 if response.data else False
+        except Exception as e:
+            print(f"Error checking expense existence: {e}")
+            return False
+
 db_client = SupabaseDB()

@@ -89,6 +89,8 @@ def parse_document():
         file_type = data.get('file_type')
         trip_id = data.get('trip_id')
         document_id = data.get('document_id')  # Optional: if you want to link back
+        user_id = data.get('user_id')  # Required for expense creation
+        user_id = data.get('user_id')  # Required for expense creation
 
         if not file_content or not file_type or not trip_id:
             return jsonify({
@@ -128,6 +130,10 @@ def parse_document():
                     if created_element:
                         created_elements.append(created_element)
 
+                        # Create linked expense if element has price
+                        if user_id and validated_element.get('price'):
+                            db_client.create_expense_from_element(trip_id, user_id, validated_element, created_element['id'])
+
                         # Link document to element if document_id provided
                         if document_id and len(created_elements) == 1:  # Link to first element
                             db_client.update_trip_document(document_id, created_element['id'])
@@ -160,6 +166,7 @@ def parse_text():
         text_content = data.get('text_content')
         trip_id = data.get('trip_id')
         document_id = data.get('document_id')  # Optional: if you want to link back
+        user_id = data.get('user_id')  # Required for expense creation
 
         if not text_content or not trip_id:
             return jsonify({
@@ -208,9 +215,13 @@ def parse_text():
                         else:
                             created_elements.append(created_element)
 
-                        # Link document to element if document_id provided
-                        if document_id and len(created_elements) == 1:  # Link to first element
-                            db_client.update_trip_document(document_id, created_element['id'])
+                            # Create linked expense if element has price (only for new elements)
+                            if user_id and validated_element.get('price'):
+                                db_client.create_expense_from_element(trip_id, user_id, validated_element, created_element['id'])
+
+                            # Link document to element if document_id provided
+                            if document_id and len(created_elements) == 1:  # Link to first element
+                                db_client.update_trip_document(document_id, created_element['id'])
                 except Exception as e:
                     print(f"Error creating element: {e}")
                     continue
