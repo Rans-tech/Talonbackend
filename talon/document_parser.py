@@ -2,10 +2,19 @@ import openai
 import os
 import base64
 import json
+import io
 from pathlib import Path
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# Try to import PDF libraries
+try:
+    import fitz  # PyMuPDF
+    PDF_SUPPORT = True
+except ImportError:
+    PDF_SUPPORT = False
+    print("Warning: PyMuPDF not installed. PDF support disabled. Install with: pip install pymupdf")
 
 class DocumentParser:
     def __init__(self):
@@ -27,6 +36,47 @@ class DocumentParser:
             print(f"Warning: Could not load knowledge base: {e}")
             return {}
 
+    def _extract_pdf_images(self, pdf_content_base64):
+        """
+        Extract images from PDF pages for Vision API processing
+
+        Args:
+            pdf_content_base64: Base64 encoded PDF content
+
+        Returns:
+            list: List of base64 encoded PNG images (one per page)
+        """
+        if not PDF_SUPPORT:
+            return None
+
+        try:
+            # Decode base64 PDF content
+            pdf_bytes = base64.b64decode(pdf_content_base64)
+
+            # Open PDF with PyMuPDF
+            doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+
+            images = []
+            # Convert each page to image (limit to first 5 pages for performance)
+            for page_num in range(min(len(doc), 5)):
+                page = doc[page_num]
+                # Render page to image (300 DPI for good quality)
+                pix = page.get_pixmap(matrix=fitz.Matrix(300/72, 300/72))
+
+                # Convert to PNG bytes
+                img_bytes = pix.tobytes("png")
+
+                # Convert to base64
+                img_base64 = base64.b64encode(img_bytes).decode('utf-8')
+                images.append(img_base64)
+
+            doc.close()
+            return images
+
+        except Exception as e:
+            print(f"Error extracting PDF images: {e}")
+            return None
+
     def parse_travel_document(self, file_content, file_type):
         """
         Parse a travel document (PDF, image) and extract structured data
@@ -44,16 +94,34 @@ class DocumentParser:
 
             # Check if file type is supported
             supported_image_types = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp']
+            supported_pdf_types = ['application/pdf']
+
+            # Handle PDF files by extracting images from pages
+            if file_type in supported_pdf_types:
+                if not PDF_SUPPORT:
+                    return {
+                        "success": False,
+                        "error": "PDF support is not available. Please install PyMuPDF: pip install pymupdf"
+                    }
+                pdf_images = self._extract_pdf_images(file_content)
+                if not pdf_images:
+                    return {
+                        "success": False,
+                        "error": "Failed to extract images from PDF. The file may be corrupted or password-protected."
+                    }
+                # Use the first page image for processing
+                file_content = pdf_images[0]
+                file_type = 'image/png'
 
             if file_type not in supported_image_types:
                 return {
                     "success": False,
-                    "error": f"Unsupported file type: {file_type}. Please upload an image file (JPG, PNG, GIF, or WebP). For PDFs, please take a screenshot or convert to an image first."
+                    "error": f"Unsupported file type: {file_type}. Please upload an image (JPG, PNG, GIF, WebP) or PDF file."
                 }
-            # Create the system prompt for structured extraction
-            system_prompt = """You are a travel document parser. Extract ALL relevant information from travel documents (flight confirmations, hotel bookings, car rentals, etc.) into structured JSON format.
+            # Create the system prompt for structured extraction with fine print analysis
+            system_prompt = """You are an expert travel document parser. Extract ALL information from travel documents including THE FINE PRINT that travelers often miss.
 
-IMPORTANT: Extract EVERY piece of information you can find. Be thorough and detailed.
+IMPORTANT: Look beyond basic dates and prices. Extract cancellation policies, refund deadlines, deposit requirements, and other details that could save money if plans change.
 
 Return ONLY valid JSON in this exact format:
 {
@@ -67,7 +135,8 @@ Return ONLY valid JSON in this exact format:
       "location": "Full location string (address, city, airport code, etc.)",
       "confirmation_number": "Confirmation/booking number or null",
       "price": numeric value only (no currency symbols) or null,
-      "currency": "USD|EUR|GBP etc or null",
+      "currency": "USD|EUR|GBP|JPY|CAD|AUD|CHF|CNY etc - DETECT FROM DOCUMENT",
+      "refundable": true or false,
       "status": "confirmed|pending|cancelled",
       "details": {
         // For flights: airline, flight_number, seat, gate, terminal, baggage_allowance, class
@@ -75,26 +144,55 @@ Return ONLY valid JSON in this exact format:
         // For cars: company, vehicle_type, pickup_location, dropoff_location, driver_name
         // For activities: venue, description, attendees, category
         // For dining: restaurant_name, cuisine, reservation_time, party_size
-        // Any other relevant details specific to this document type
+      },
+      "policies": {
+        "cancellation_deadline": "ISO datetime - last date/time for free cancellation or null",
+        "cancellation_fee": numeric fee amount or null,
+        "cancellation_policy": "Full text of cancellation policy or summary",
+        "refund_policy": "How refunds work - full/partial/credit/none",
+        "modification_policy": "Can booking be changed? Fees?",
+        "deposit_amount": numeric deposit paid or null,
+        "deposit_refundable": true/false/partial,
+        "balance_due_date": "ISO date when remaining balance is due or null",
+        "no_show_fee": numeric fee for no-show or null,
+        "early_checkout_fee": numeric fee or null (hotels),
+        "change_fee": numeric fee for changes or null
       }
     }
   ],
   "metadata": {
     "traveler_name": "Name of the traveler or null",
     "total_cost": numeric total or null,
+    "amount_paid": numeric amount already paid or null,
+    "balance_due": numeric remaining balance or null,
     "booking_date": "YYYY-MM-DD or null",
-    "vendor": "Company/airline/hotel name or null"
-  }
+    "vendor": "Company/airline/hotel name or null",
+    "vendor_phone": "Contact phone number or null",
+    "vendor_email": "Contact email or null"
+  },
+  "important_deadlines": [
+    {
+      "type": "cancellation|payment|check_in|modification",
+      "deadline": "ISO datetime",
+      "description": "What happens at this deadline",
+      "financial_impact": "Amount at risk if deadline missed"
+    }
+  ],
+  "cost_recovery_notes": "Any opportunities to recover costs if trip is disrupted - travel insurance mentions, credit card protections, airline credits, etc."
 }
 
-CRITICAL RULES:
-1. Extract ALL information visible in the document
-2. If a flight has multiple segments, create separate elements for each
-3. For dates/times, convert to ISO 8601 format (e.g., "2025-11-07T14:30:00")
-4. For prices, extract only numeric values (remove $, €, etc symbols)
-5. Be specific with locations (include airport codes, full addresses)
-6. Include all details in the "details" object
-7. Return ONLY the JSON object, no additional text"""
+CRITICAL EXTRACTION RULES:
+1. FINE PRINT IS GOLD: Scan every corner for cancellation policies, deadlines, fees
+2. CURRENCY: Detect actual currency from symbols/codes, don't assume USD
+3. REFUNDABILITY: Note if booking is refundable, non-refundable, or partially refundable
+4. DEADLINES: Extract ALL deadlines - cancellation, payment, check-in, etc.
+5. DEPOSITS: Note deposit amounts and whether they're refundable
+6. CHANGE FEES: Extract any fees for modifications
+7. CONTACT INFO: Get vendor phone/email for cancellations
+8. For flights with multiple segments, create separate elements
+9. Convert all dates to ISO 8601 format
+10. Extract numeric values only for prices (no currency symbols)
+11. Return ONLY the JSON object, no additional text"""
 
             # Prepare the message for Vision API
             messages = [
@@ -367,14 +465,32 @@ Element 2: Return flight
             
             # Check if file type is supported
             supported_image_types = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp']
+            supported_pdf_types = ['application/pdf']
+            
+            # Handle PDF files by extracting images from pages
+            if file_type in supported_pdf_types:
+                if not PDF_SUPPORT:
+                    return {
+                        "success": False,
+                        "error": "PDF support is not available. Please install PyMuPDF: pip install pymupdf"
+                    }
+                pdf_images = self._extract_pdf_images(file_content)
+                if not pdf_images:
+                    return {
+                        "success": False,
+                        "error": "Failed to extract images from PDF. The file may be corrupted or password-protected."
+                    }
+                # Use the first page image for processing
+                file_content = pdf_images[0]
+                file_type = 'image/png'
             
             if file_type not in supported_image_types:
                 return {
                     "success": False,
-                    "error": f"Unsupported file type: {file_type}. Please upload an image file."
+                    "error": f"Unsupported file type: {file_type}. Please upload an image (JPG, PNG, GIF, WebP) or PDF file."
                 }
             
-            # Create receipt-specific prompt
+            # Create receipt-specific prompt with currency detection
             system_prompt = """You are a receipt parser. Extract expense information from receipt images.
 
 Return ONLY valid JSON in this exact format:
@@ -395,12 +511,20 @@ Category guidelines:
 - shopping: Retail purchases, souvenirs, clothing
 - other: Everything else
 
+CURRENCY DETECTION - CRITICAL:
+- Look for currency symbols: $ (USD), € (EUR), £ (GBP), ¥ (JPY/CNY), ₹ (INR), etc.
+- Look for currency codes: USD, EUR, GBP, JPY, CAD, AUD, CHF, etc.
+- Consider the country/location context (European restaurant = likely EUR)
+- Common mappings: $ in USA = USD, $ in Canada = CAD, $ in Australia = AUD
+- If unclear, check language on receipt for hints
+
 CRITICAL RULES:
-1. Extract the TOTAL amount (not subtotal)
+1. Extract the TOTAL amount (not subtotal) - numeric value only
 2. Use merchant/restaurant name from receipt
 3. Convert date to YYYY-MM-DD format
 4. Choose the most appropriate category
-5. Return ONLY the JSON object, no additional text"""
+5. DETECT THE CORRECT CURRENCY from the receipt - do not assume USD
+6. Return ONLY the JSON object, no additional text"""
             
             # Prepare the Vision API message
             messages = [

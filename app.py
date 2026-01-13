@@ -8,6 +8,7 @@ from talon.insights_detector import InsightsDetector
 from talon.pattern_matcher import PatternMatcher
 from talon.insights_learning import InsightsLearning
 from talon.insights_ai import InsightsAI
+from talon.currency_service import currency_service
 from datetime import datetime
 import os
 import base64
@@ -782,6 +783,52 @@ def accept_invitation():
             'error': str(e)
         }), 500
 
+
+# ============================================================================
+# CURRENCY ENDPOINTS
+# ============================================================================
+
+@app.route('/api/currencies', methods=['GET'])
+def get_currencies():
+    """Get supported currencies for expense tracking"""
+    currencies = [
+        {'code': 'USD', 'name': 'US Dollar', 'symbol': '$'},
+        {'code': 'EUR', 'name': 'Euro', 'symbol': '€'},
+        {'code': 'GBP', 'name': 'British Pound', 'symbol': '£'},
+        {'code': 'JPY', 'name': 'Japanese Yen', 'symbol': '¥'},
+        {'code': 'CAD', 'name': 'Canadian Dollar', 'symbol': 'C$'},
+        {'code': 'AUD', 'name': 'Australian Dollar', 'symbol': 'A$'},
+        {'code': 'CHF', 'name': 'Swiss Franc', 'symbol': 'CHF'},
+        {'code': 'CNY', 'name': 'Chinese Yuan', 'symbol': '¥'},
+        {'code': 'INR', 'name': 'Indian Rupee', 'symbol': '₹'},
+        {'code': 'MXN', 'name': 'Mexican Peso', 'symbol': '$'},
+        {'code': 'BRL', 'name': 'Brazilian Real', 'symbol': 'R$'},
+        {'code': 'KRW', 'name': 'South Korean Won', 'symbol': '₩'},
+        {'code': 'SGD', 'name': 'Singapore Dollar', 'symbol': 'S$'},
+        {'code': 'HKD', 'name': 'Hong Kong Dollar', 'symbol': 'HK$'},
+        {'code': 'THB', 'name': 'Thai Baht', 'symbol': '฿'},
+    ]
+    return jsonify({'success': True, 'currencies': currencies})
+
+@app.route('/api/currencies/convert', methods=['POST'])
+def convert_currency():
+    """Convert an amount between currencies"""
+    try:
+        data = request.json
+        amount = float(data.get('amount', 0))
+        from_currency = data.get('from_currency', 'USD').upper()
+        to_currency = data.get('to_currency', 'USD').upper()
+
+        if amount <= 0:
+            return jsonify({'success': False, 'error': 'Amount must be positive'}), 400
+
+        result = currency_service.convert_amount(amount, from_currency, to_currency)
+        return jsonify({'success': True, **result})
+    except Exception as e:
+        print(f"Error converting currency: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
 
@@ -826,16 +873,31 @@ def get_trip_expenses(trip_id):
 
 @app.route('/api/trips/<trip_id>/expenses', methods=['POST'])
 def create_expense(trip_id):
-    """Create a new expense for a trip"""
+    """Create a new expense for a trip with automatic currency conversion"""
     try:
         data = request.json
         if not data.get('amount') or not data.get('category') or not data.get('expense_date') or not data.get('user_id'):
             return jsonify({'success': False, 'error': 'Missing required fields'}), 400
 
+        original_amount = float(data['amount'])
+        original_currency = data.get('currency', 'USD').upper()
+
+        # Convert to USD if different currency
+        if original_currency != 'USD':
+            conversion = currency_service.convert_amount(original_amount, original_currency, 'USD')
+            amount_usd = conversion['converted_amount']
+            exchange_rate = conversion['exchange_rate']
+        else:
+            amount_usd = original_amount
+            exchange_rate = 1.0
+
         expense_data = {
             'trip_id': trip_id,
             'user_id': data['user_id'],
-            'amount': float(data['amount']),
+            'amount': amount_usd,
+            'original_amount': original_amount,
+            'original_currency': original_currency,
+            'exchange_rate': exchange_rate,
             'category': data['category'],
             'description': data.get('description', ''),
             'expense_date': data['expense_date'],
@@ -852,12 +914,29 @@ def create_expense(trip_id):
 
 @app.route('/api/expenses/<expense_id>', methods=['PUT'])
 def update_expense(expense_id):
-    """Update an existing expense"""
+    """Update an existing expense with currency conversion"""
     try:
         data = request.json
         update_data = {}
-        if 'amount' in data:
-            update_data['amount'] = float(data['amount'])
+
+        # Handle currency conversion if amount or currency changed
+        if 'amount' in data or 'currency' in data:
+            original_amount = float(data.get('amount', 0))
+            original_currency = data.get('currency', 'USD').upper()
+
+            if original_amount > 0:
+                if original_currency != 'USD':
+                    conversion = currency_service.convert_amount(original_amount, original_currency, 'USD')
+                    update_data['amount'] = conversion['converted_amount']
+                    update_data['original_amount'] = original_amount
+                    update_data['original_currency'] = original_currency
+                    update_data['exchange_rate'] = conversion['exchange_rate']
+                else:
+                    update_data['amount'] = original_amount
+                    update_data['original_amount'] = original_amount
+                    update_data['original_currency'] = 'USD'
+                    update_data['exchange_rate'] = 1.0
+
         if 'category' in data:
             update_data['category'] = data['category']
         if 'description' in data:
