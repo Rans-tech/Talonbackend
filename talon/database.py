@@ -41,11 +41,16 @@ class SupabaseDB:
             return None
         try:
             element_type = element_data.get('type')
-            if element_type == 'flight':
-                start_datetime = element_data.get('start_datetime')
+            start_datetime = element_data.get('start_datetime')
+
+            # For flights and hotels, use start_datetime to differentiate
+            # (e.g., hotel check-in vs check-out have same confirmation but different times)
+            if element_type in ['flight', 'hotel', 'hotel_checkin', 'hotel_checkout']:
                 if not start_datetime:
                     return None
-                response = self.client.table('trip_elements').select("*").eq('trip_id', trip_id).eq('type', 'flight').eq('confirmation_number', confirmation_number).eq('start_datetime', start_datetime).execute()
+                # Map hotel subtypes to 'hotel' for DB query
+                db_type = 'hotel' if element_type in ['hotel_checkin', 'hotel_checkout'] else element_type
+                response = self.client.table('trip_elements').select("*").eq('trip_id', trip_id).eq('type', db_type).eq('confirmation_number', confirmation_number).eq('start_datetime', start_datetime).execute()
                 if response.data and len(response.data) > 0:
                     return response.data[0]
                 return None
