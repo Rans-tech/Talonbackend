@@ -157,6 +157,23 @@ def parse_document():
         parsed_data = parse_result['data']
         created_elements = []
 
+        # FALLBACK: If no elements have prices but metadata has total_cost,
+        # apply it to the first element (GPT sometimes puts price only in metadata)
+        if 'elements' in parsed_data and 'metadata' in parsed_data:
+            elements = parsed_data['elements']
+            metadata = parsed_data['metadata']
+            total_cost = metadata.get('total_cost')
+
+            if total_cost and total_cost > 0:
+                has_any_price = any(e.get('price') for e in elements)
+                if not has_any_price and len(elements) > 0:
+                    print(f"FALLBACK: No element prices but metadata has total_cost={total_cost}")
+                    print(f"Applying total_cost to first element")
+                    elements[0]['price'] = total_cost
+                    # Try to get currency from metadata or default to USD
+                    if not elements[0].get('currency'):
+                        elements[0]['currency'] = metadata.get('currency', 'USD')
+
         # Create trip elements from parsed data
         if 'elements' in parsed_data:
             for element_data in parsed_data['elements']:
