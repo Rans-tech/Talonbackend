@@ -65,9 +65,25 @@ class SupabaseDB:
                     print(f"Duplicate found: {element_data.get('type')} with confirmation #{confirmation_number} already exists")
                     return existing
 
+            # Get original type and map to DB-compatible type
+            original_type = element_data.get('type')
+            
+            # Map hotel subtypes to 'hotel' for database compatibility
+            # but store the subtype in details for frontend display
+            db_type_map = {
+                'hotel_checkin': 'hotel',
+                'hotel_checkout': 'hotel',
+            }
+            db_type = db_type_map.get(original_type, original_type)
+            
+            # Store the original subtype in details if it was mapped
+            details = element_data.get('details', {})
+            if original_type in db_type_map:
+                details['hotel_event_type'] = original_type  # 'hotel_checkin' or 'hotel_checkout'
+            
             insert_data = {
                 'trip_id': trip_id,
-                'type': element_data.get('type'),
+                'type': db_type,
                 'title': element_data.get('title'),
                 'start_datetime': element_data.get('start_datetime'),
                 'end_datetime': element_data.get('end_datetime'),
@@ -75,9 +91,11 @@ class SupabaseDB:
                 'confirmation_number': confirmation_number,
                 'price': element_data.get('price'),
                 'status': element_data.get('status', 'confirmed'),
-                'details': element_data.get('details', {})
+                'details': details
             }
             response = self.client.table('trip_elements').insert(insert_data).execute()
+            if response.data:
+                print(f"Created trip element: {original_type} -> DB type: {db_type}")
             return response.data[0] if response.data else None
         except Exception as e:
             print(f"Error creating trip element: {e}")
@@ -110,6 +128,8 @@ class SupabaseDB:
             category_map = {
                 'flight': 'flight',
                 'hotel': 'accommodation',
+                'hotel_checkin': 'accommodation',
+                'hotel_checkout': 'accommodation',
                 'dining': 'food_dining',
                 'activity': 'tours_activities',
                 'transport': 'transportation',
