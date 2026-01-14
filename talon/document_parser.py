@@ -77,6 +77,35 @@ class DocumentParser:
             print(f"Error extracting PDF images: {e}")
             return None
 
+    def _extract_pdf_text(self, pdf_content_base64):
+        """
+        Extract text from all PDF pages - much more efficient than images.
+        This is the preferred method for most travel confirmations.
+        """
+        if not PDF_SUPPORT:
+            return None
+
+        try:
+            import base64
+            pdf_bytes = base64.b64decode(pdf_content_base64)
+            doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+
+            all_text = []
+            for page_num in range(len(doc)):
+                page = doc[page_num]
+                text = page.get_text("text")
+                if text.strip():
+                    all_text.append(f"\n--- PAGE {page_num + 1} ---\n{text}")
+
+            doc.close()
+            combined = "\n".join(all_text).strip()
+            print(f"PDF text extraction: {len(doc)} pages, {len(combined)} chars")
+            return combined if len(combined) > 50 else None
+
+        except Exception as e:
+            print(f"Error extracting PDF text: {e}")
+            return None
+
     def parse_travel_document(self, file_content, file_type):
         """
         Parse a travel document (PDF, image) and extract structured data
@@ -96,22 +125,32 @@ class DocumentParser:
             supported_image_types = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp']
             supported_pdf_types = ['application/pdf']
 
-            # Handle PDF files by extracting images from pages
+            # Handle PDF files - TEXT extraction first, then fall back to images
             if file_type in supported_pdf_types:
                 if not PDF_SUPPORT:
                     return {
                         "success": False,
                         "error": "PDF support is not available. Please install PyMuPDF: pip install pymupdf"
                     }
+
+                # PRIMARY: Try text extraction (fast, handles multi-page, low memory)
+                print("Attempting PDF text extraction...")
+                pdf_text = self._extract_pdf_text(file_content)
+
+                if pdf_text and len(pdf_text) > 100:
+                    print(f"Using TEXT extraction ({len(pdf_text)} chars from all pages)")
+                    # Use the text parser - handles multi-page content properly
+                    return self.parse_travel_text(pdf_text)
+
+                # FALLBACK: Image processing for scanned/image-based PDFs
+                print("Text extraction insufficient, falling back to image processing...")
                 pdf_images = self._extract_pdf_images(file_content)
                 if not pdf_images:
                     return {
                         "success": False,
-                        "error": "Failed to extract images from PDF. The file may be corrupted or password-protected."
+                        "error": "Failed to extract content from PDF. The file may be corrupted or password-protected."
                     }
-                # Use the first page image for processing
-                # Note: Multi-page PDFs may need all pages - for now using first page
-                print(f"Extracted {len(pdf_images)} pages from PDF, using first page")
+                print(f"Using IMAGE extraction (first of {len(pdf_images)} pages)")
                 file_content = pdf_images[0]
                 file_type = 'image/png'
 

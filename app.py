@@ -43,6 +43,34 @@ CORS(app, resources={
     }
 })
 
+# Global error handler to ensure CORS headers on ALL responses including errors
+@app.errorhandler(Exception)
+def handle_exception(e):
+    """Catch all unhandled exceptions and return JSON with CORS headers"""
+    import traceback
+    error_trace = traceback.format_exc()
+    print(f"=== UNHANDLED EXCEPTION ===")
+    print(error_trace)
+    print(f"===========================")
+    response = jsonify({
+        "success": False,
+        "error": str(e),
+        "type": type(e).__name__
+    })
+    response.status_code = 500
+    return response
+
+@app.errorhandler(500)
+def handle_500(e):
+    """Handle 500 errors with proper JSON response"""
+    response = jsonify({
+        "success": False,
+        "error": "Internal server error",
+        "details": str(e)
+    })
+    response.status_code = 500
+    return response
+
 # Initialize TALON agent
 talon = TalonAgent()
 weather_monitor = WeatherMonitor()
@@ -85,7 +113,16 @@ def get_price_monitoring():
 def parse_document():
     """Parse uploaded travel document and create trip elements"""
     try:
+        print("=== PARSE_DOCUMENT CALLED ===")
         data = request.json
+
+        # Log request details for debugging
+        file_type = data.get('file_type', 'unknown')
+        file_content = data.get('file_content', '')
+        content_length = len(file_content) if file_content else 0
+        print(f"File type: {file_type}")
+        print(f"Content length: {content_length} chars")
+        print(f"Trip ID: {data.get('trip_id')}")
 
         # Extract required fields
         file_content = data.get('file_content')  # Base64 encoded
