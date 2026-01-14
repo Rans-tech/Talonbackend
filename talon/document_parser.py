@@ -97,10 +97,16 @@ class DocumentParser:
                 if text.strip():
                     all_text.append(f"\n--- PAGE {page_num + 1} ---\n{text}")
 
+            page_count = len(doc)
             doc.close()
             combined = "\n".join(all_text).strip()
-            print(f"PDF text extraction: {len(doc)} pages, {len(combined)} chars")
-            return combined if len(combined) > 50 else None
+            print(f"PDF text extraction: {page_count} pages, {len(combined)} chars")
+            if len(combined) > 100:
+                print(f"Text preview (first 500 chars): {combined[:500]}")
+                return combined
+            else:
+                print(f"Text extraction insufficient: only {len(combined)} chars")
+                return None
 
         except Exception as e:
             print(f"Error extracting PDF text: {e}")
@@ -138,9 +144,15 @@ class DocumentParser:
                 pdf_text = self._extract_pdf_text(file_content)
 
                 if pdf_text and len(pdf_text) > 100:
-                    print(f"Using TEXT extraction ({len(pdf_text)} chars from all pages)")
-                    # Use the text parser - handles multi-page content properly
-                    return self.parse_travel_text(pdf_text)
+                    print(f"=== USING TEXT EXTRACTION PATH ===")
+                    print(f"Text length: {len(pdf_text)} chars")
+                    result = self.parse_travel_text(pdf_text)
+                    print(f"Text parser result success: {result.get('success')}")
+                    if not result.get('success'):
+                        print(f"Text parser error: {result.get('error')}")
+                        if 'raw_response' in result:
+                            print(f"Raw response: {result.get('raw_response', '')[:500]}")
+                    return result
 
                 # FALLBACK: Image processing for scanned/image-based PDFs
                 print("Text extraction insufficient, falling back to image processing...")
@@ -386,6 +398,9 @@ CRITICAL EXTRACTION RULES:
 
             # Parse the response
             content = response.choices[0].message.content.strip()
+            print(f"=== GPT-4 RAW RESPONSE (first 1000 chars) ===")
+            print(content[:1000])
+            print(f"=== END RAW RESPONSE ===")
 
             # Remove markdown code blocks if present
             if content.startswith("```json"):
@@ -395,6 +410,8 @@ CRITICAL EXTRACTION RULES:
             if content.endswith("```"):
                 content = content[:-3]  # Remove closing ```
             content = content.strip()
+
+            print(f"After cleanup (first 500 chars): {content[:500]}")
 
             # Parse JSON
             parsed_data = json.loads(content)
