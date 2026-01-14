@@ -43,19 +43,20 @@ class SupabaseDB:
             element_type = element_data.get('type')
             start_datetime = element_data.get('start_datetime')
 
-            # For flights and hotels, use start_datetime to differentiate
-            # (e.g., hotel check-in vs check-out have same confirmation but different times)
-            if element_type in ['flight', 'hotel', 'hotel_checkin', 'hotel_checkout']:
-                if not start_datetime:
-                    return None
-                # Map hotel subtypes to 'hotel' for DB query
-                db_type = 'hotel' if element_type in ['hotel_checkin', 'hotel_checkout'] else element_type
+            # Map hotel subtypes to 'hotel' for DB query
+            db_type = 'hotel' if element_type in ['hotel_checkin', 'hotel_checkout'] else element_type
+
+            # ALWAYS use start_datetime to differentiate elements with same confirmation
+            # This allows multiple activities/events on different dates with same booking reference
+            # (e.g., two ski lessons on Feb 27 and Mar 1 with same order number)
+            if start_datetime:
                 response = self.client.table('trip_elements').select("*").eq('trip_id', trip_id).eq('type', db_type).eq('confirmation_number', confirmation_number).eq('start_datetime', start_datetime).execute()
                 if response.data and len(response.data) > 0:
                     return response.data[0]
                 return None
             else:
-                response = self.client.table('trip_elements').select("*").eq('trip_id', trip_id).eq('confirmation_number', confirmation_number).execute()
+                # No start_datetime - fall back to just confirmation number + type check
+                response = self.client.table('trip_elements').select("*").eq('trip_id', trip_id).eq('type', db_type).eq('confirmation_number', confirmation_number).execute()
                 return response.data[0] if response.data else None
         except Exception as e:
             print(f"Error checking duplicate: {e}")
