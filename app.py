@@ -31,6 +31,8 @@ FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:5173')
 FROM_EMAIL = os.getenv('FROM_EMAIL', 'noreply@travelraven.com')
 
 app = Flask(__name__)
+# Allow large file uploads (50MB)
+app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024
 # Enable CORS for all origins (including localhost for development)
 CORS(app, resources={
     r"/api/*": {
