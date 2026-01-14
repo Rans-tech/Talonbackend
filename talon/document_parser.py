@@ -128,19 +128,19 @@ Return ONLY valid JSON in this exact format:
   "document_type": "flight|hotel|car_rental|activity|dining|transport|other",
   "elements": [
     {
-      "type": "flight|hotel|activity|dining|transport|other",
+      "type": "flight|hotel_checkin|hotel_checkout|activity|dining|transport|other",
       "title": "Brief descriptive title",
-      "start_datetime": "ISO 8601 format (YYYY-MM-DDTHH:MM:SS) or null",
+      "start_datetime": "ISO 8601 format (YYYY-MM-DDTHH:MM:SS)",
       "end_datetime": "ISO 8601 format (YYYY-MM-DDTHH:MM:SS) or null",
-      "location": "Full location string (address, city, airport code, etc.)",
+      "location": "Full location string (address, city, country)",
       "confirmation_number": "Confirmation/booking number or null",
       "price": numeric value only (no currency symbols) or null,
-      "currency": "USD|EUR|GBP|JPY|CAD|AUD|CHF|CNY etc - DETECT FROM DOCUMENT",
+      "currency": "EUR|GBP|USD|JPY|CAD|AUD|CHF|CNY etc - DETECT FROM DOCUMENT",
       "refundable": true or false,
       "status": "confirmed|pending|cancelled",
       "details": {
         // For flights: airline, flight_number, seat, gate, terminal, baggage_allowance, class
-        // For hotels: hotel_name, room_type, check_in, check_out, guests, amenities
+        // For hotels: hotel_name, room_type, guests, amenities, num_nights
         // For cars: company, vehicle_type, pickup_location, dropoff_location, driver_name
         // For activities: venue, description, attendees, category
         // For dining: restaurant_name, cuisine, reservation_time, party_size
@@ -163,6 +163,7 @@ Return ONLY valid JSON in this exact format:
   "metadata": {
     "traveler_name": "Name of the traveler or null",
     "total_cost": numeric total or null,
+    "currency": "EUR|GBP|USD|JPY|CAD|AUD|CHF|CNY etc - DETECT FROM DOCUMENT",
     "amount_paid": numeric amount already paid or null,
     "balance_due": numeric remaining balance or null,
     "booking_date": "YYYY-MM-DD or null",
@@ -181,18 +182,77 @@ Return ONLY valid JSON in this exact format:
   "cost_recovery_notes": "Any opportunities to recover costs if trip is disrupted - travel insurance mentions, credit card protections, airline credits, etc."
 }
 
+=== CRITICAL: CURRENCY DETECTION - DO NOT ASSUME USD ===
+You MUST detect the actual currency from the document:
+- Look for currency CODES: "EUR", "GBP", "USD", "JPY", "CAD", "AUD", "CHF", etc.
+- Look for currency SYMBOLS: € = EUR, £ = GBP, $ = USD (but $ in Canada = CAD, Australia = AUD), ¥ = JPY/CNY
+- Consider COUNTRY CONTEXT: Ireland/Europe = EUR, UK = GBP, Japan = JPY, USA = USD
+- If document shows "2,060.00 EUR" - the currency is EUR, NOT USD!
+- If document shows "€2,060" - the currency is EUR!
+- European hotels (Ireland, France, Germany, Italy, Spain, etc.) = EUR
+- NEVER default to USD for non-US documents!
+
+=== CRITICAL: HOTEL BOOKING RULES - CREATE TWO EVENTS ===
+For HOTEL reservations, you MUST create TWO separate elements to show on the timeline:
+
+1. **hotel_checkin** element (FIRST):
+   - type: "hotel_checkin"
+   - title: "Check-in: [Hotel Name]"
+   - start_datetime: Arrival date with CHECK-IN TIME
+     - Use hotel's stated check-in time if available
+     - Default to 16:00 (4pm) if not specified
+   - end_datetime: null
+   - price: Put the FULL booking price on CHECK-IN element
+   - currency: Detected currency
+   - Include all hotel details and policies
+
+2. **hotel_checkout** element (SECOND):
+   - type: "hotel_checkout"
+   - title: "Check-out: [Hotel Name]"
+   - start_datetime: Departure date with CHECK-OUT TIME
+     - Use hotel's stated check-out time if available
+     - Default to 11:00 (11am) if not specified
+   - end_datetime: null
+   - price: null (already on check-in)
+   - currency: Same as check-in
+   - confirmation_number: SAME as check-in element
+
+HOTEL EXAMPLE - Ashford Castle, April 2-4, check-in 3pm, checkout 12noon, 2060 EUR:
+[
+  {
+    "type": "hotel_checkin",
+    "title": "Check-in: Ashford Castle",
+    "start_datetime": "2026-04-02T15:00:00",
+    "location": "Ashford Castle, Cong, Co. Mayo, Ireland",
+    "confirmation_number": "419331031",
+    "price": 2060,
+    "currency": "EUR",
+    "details": {"hotel_name": "Ashford Castle", "room_type": "Lake View Deluxe", "guests": "2 Adults, 1 Child", "num_nights": 2}
+  },
+  {
+    "type": "hotel_checkout",
+    "title": "Check-out: Ashford Castle",
+    "start_datetime": "2026-04-04T12:00:00",
+    "location": "Ashford Castle, Cong, Co. Mayo, Ireland",
+    "confirmation_number": "419331031",
+    "price": null,
+    "currency": "EUR"
+  }
+]
+
 CRITICAL EXTRACTION RULES:
 1. FINE PRINT IS GOLD: Scan every corner for cancellation policies, deadlines, fees
-2. CURRENCY: Detect actual currency from symbols/codes, don't assume USD
-3. REFUNDABILITY: Note if booking is refundable, non-refundable, or partially refundable
-4. DEADLINES: Extract ALL deadlines - cancellation, payment, check-in, etc.
-5. DEPOSITS: Note deposit amounts and whether they're refundable
-6. CHANGE FEES: Extract any fees for modifications
-7. CONTACT INFO: Get vendor phone/email for cancellations
-8. For flights with multiple segments, create separate elements
-9. Convert all dates to ISO 8601 format
-10. Extract numeric values only for prices (no currency symbols)
-11. Return ONLY the JSON object, no additional text"""
+2. CURRENCY: Detect actual currency - NEVER assume USD for European/international hotels!
+3. HOTELS: ALWAYS create TWO elements (hotel_checkin + hotel_checkout) with correct times
+4. REFUNDABILITY: Note if booking is refundable, non-refundable, or partially refundable
+5. DEADLINES: Extract ALL deadlines - cancellation, payment, check-in, etc.
+6. DEPOSITS: Note deposit amounts and whether they're refundable
+7. CHANGE FEES: Extract any fees for modifications
+8. CONTACT INFO: Get vendor phone/email for cancellations
+9. For flights with multiple segments, create separate elements
+10. Convert all dates to ISO 8601 format
+11. Extract numeric values only for prices (no currency symbols)
+12. Return ONLY the JSON object, no additional text"""
 
             # Prepare the message for Vision API
             messages = [
@@ -434,7 +494,7 @@ Element 2: Return flight
                 raise ValueError(f"Missing required field: {field}")
 
         # Validate type
-        valid_types = ['flight', 'hotel', 'activity', 'dining', 'transport', 'other']
+        valid_types = ['flight', 'hotel', 'hotel_checkin', 'hotel_checkout', 'activity', 'dining', 'transport', 'other']
         if element['type'] not in valid_types:
             element['type'] = 'other'
 
