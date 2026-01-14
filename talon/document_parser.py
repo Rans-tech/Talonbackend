@@ -109,7 +109,10 @@ class DocumentParser:
                         "success": False,
                         "error": "Failed to extract images from PDF. The file may be corrupted or password-protected."
                     }
-                # Use the first page image for processing
+                # Store all PDF pages for multi-page processing
+                all_pdf_pages = pdf_images
+                print(f"Extracted {len(all_pdf_pages)} pages from PDF")
+                # Use first page for type check
                 file_content = pdf_images[0]
                 file_type = 'image/png'
 
@@ -240,21 +243,112 @@ HOTEL EXAMPLE - Ashford Castle, April 2-4, check-in 3pm, checkout 12noon, 2060 E
   }
 ]
 
+=== CRITICAL: FLIGHT BOOKING RULES - CREATE SEPARATE ELEMENTS ===
+For FLIGHT reservations, you MUST:
+
+1. **CREATE SEPARATE ELEMENTS** for EACH flight leg:
+   - Outbound flight = 1 element
+   - Return flight = 1 element
+   - Connecting flights = separate element for each leg
+   - Round-trip booking = MINIMUM 2 elements
+
+2. **EXTRACT ALL FLIGHT DETAILS**:
+   - type: "flight"
+   - title: "[Airline] [Flight#] [Origin] to [Destination]"
+   - start_datetime: DEPARTURE time in LOCAL time (e.g., "2026-04-01T06:25:00")
+   - end_datetime: ARRIVAL time in LOCAL time (e.g., "2026-04-01T07:35:00")
+   - location: "From [Origin Airport/Code] to [Destination Airport/Code]"
+   - confirmation_number: Booking reference (SAME for all legs of same booking)
+   - price: Total cost on FIRST leg only, null on subsequent legs
+   - currency: Detected currency (EUR for European airlines like Aer Lingus, Ryanair)
+
+3. **FLIGHT DETAILS object must include**:
+   - airline: "Aer Lingus", "Ryanair", "Delta", etc.
+   - flight_number: "EI123", "FR456", etc.
+   - origin_airport: Full name with code
+   - destination_airport: Full name with code
+   - class: "Economy", "Business", etc.
+   - passengers: Number and names if available
+   - baggage_allowance: What's included
+
+FLIGHT EXAMPLE - Round-trip:
+[
+  {
+    "type": "flight",
+    "title": "Aer Lingus EI3123 Dublin to Shannon",
+    "start_datetime": "2026-04-01T06:25:00",
+    "end_datetime": "2026-04-01T07:35:00",
+    "location": "From Dublin (DUB) to Shannon (SNN)",
+    "confirmation_number": "2EC2ZW",
+    "price": 245.50,
+    "currency": "EUR",
+    "details": {"airline": "Aer Lingus", "flight_number": "EI3123", "origin_airport": "Dublin (DUB)", "destination_airport": "Shannon (SNN)"}
+  },
+  {
+    "type": "flight",
+    "title": "Aer Lingus EI3128 Shannon to Dublin",
+    "start_datetime": "2026-04-05T19:30:00",
+    "end_datetime": "2026-04-05T20:40:00",
+    "location": "From Shannon (SNN) to Dublin (DUB)",
+    "confirmation_number": "2EC2ZW",
+    "price": null,
+    "currency": "EUR",
+    "details": {"airline": "Aer Lingus", "flight_number": "EI3128", "origin_airport": "Shannon (SNN)", "destination_airport": "Dublin (DUB)"}
+  }
+]
+
+=== MULTI-PAGE DOCUMENT HANDLING ===
+- ANALYZE ALL PAGES - flight details are often spread across multiple pages
+- Outbound flight may be on page 1, return flight on page 2 or 3
+- Price/cost summary may be on a different page than flight times
+- Look for sections labeled "Return", "Inbound", "Return Journey"
+- Passenger and baggage info may be on separate pages
+
 CRITICAL EXTRACTION RULES:
 1. FINE PRINT IS GOLD: Scan every corner for cancellation policies, deadlines, fees
-2. CURRENCY: Detect actual currency - NEVER assume USD for European/international hotels!
+2. CURRENCY: Detect actual currency - NEVER assume USD!
+   - Aer Lingus, Ryanair, Irish Ferries = EUR
+   - British Airways from UK = GBP
+   - American carriers = USD
 3. HOTELS: ALWAYS create TWO elements (hotel_checkin + hotel_checkout) with correct times
-4. REFUNDABILITY: Note if booking is refundable, non-refundable, or partially refundable
-5. DEADLINES: Extract ALL deadlines - cancellation, payment, check-in, etc.
-6. DEPOSITS: Note deposit amounts and whether they're refundable
-7. CHANGE FEES: Extract any fees for modifications
-8. CONTACT INFO: Get vendor phone/email for cancellations
-9. For flights with multiple segments, create separate elements
-10. Convert all dates to ISO 8601 format
-11. Extract numeric values only for prices (no currency symbols)
-12. Return ONLY the JSON object, no additional text"""
+4. FLIGHTS: ALWAYS create SEPARATE elements for EACH flight leg (outbound AND return)
+5. DATES & TIMES: Extract EXACT departure/arrival times - these are CRITICAL
+6. PRICES: Find the total cost - often on a payment summary page
+7. REFUNDABILITY: Note if booking is refundable or non-refundable
+8. DEADLINES: Extract ALL deadlines - cancellation, payment, check-in
+9. Convert all dates to ISO 8601 format (YYYY-MM-DDTHH:MM:SS)
+10. Extract numeric values only for prices (no currency symbols)
+11. Return ONLY the JSON object, no additional text
+12. SCAN ALL PAGES for complete information - DO NOT MISS THE RETURN FLIGHT"""
 
-            # Prepare the message for Vision API
+            # Prepare the message for Vision API with ALL PDF pages
+            user_content = [
+                {
+                    "type": "text",
+                    "text": "Extract all travel information from this document and return structured JSON. IMPORTANT: This may be a multi-page document - analyze ALL pages shown to find all flights, dates, costs, and details."
+                }
+            ]
+
+            # Add all PDF pages to the message
+            if 'all_pdf_pages' in dir() and all_pdf_pages and len(all_pdf_pages) > 1:
+                for i, page_img in enumerate(all_pdf_pages):
+                    user_content.append({
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/png;base64,{page_img}",
+                            "detail": "high"
+                        }
+                    })
+                print(f"Sending {len(all_pdf_pages)} PDF pages to Vision API")
+            else:
+                user_content.append({
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:{file_type};base64,{file_content}",
+                        "detail": "high"
+                    }
+                })
+
             messages = [
                 {
                     "role": "system",
@@ -262,18 +356,7 @@ CRITICAL EXTRACTION RULES:
                 },
                 {
                     "role": "user",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": "Extract all travel information from this document and return structured JSON."
-                        },
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:{file_type};base64,{file_content}"
-                            }
-                        }
-                    ]
+                    "content": user_content
                 }
             ]
 
@@ -281,7 +364,7 @@ CRITICAL EXTRACTION RULES:
             response = openai.chat.completions.create(
                 model="gpt-4o",  # GPT-4 Vision model
                 messages=messages,
-                max_tokens=2000,
+                max_tokens=4000,
                 temperature=0  # Low temperature for consistent extraction
             )
 
