@@ -96,6 +96,9 @@ class DocumentParser:
             supported_image_types = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp']
             supported_pdf_types = ['application/pdf']
 
+            # Initialize multi-page tracking
+            all_pdf_pages = None
+
             # Handle PDF files by extracting images from pages
             if file_type in supported_pdf_types:
                 if not PDF_SUPPORT:
@@ -330,7 +333,7 @@ CRITICAL EXTRACTION RULES:
             ]
 
             # Add all PDF pages to the message
-            if 'all_pdf_pages' in dir() and all_pdf_pages and len(all_pdf_pages) > 1:
+            if all_pdf_pages and len(all_pdf_pages) > 1:
                 for i, page_img in enumerate(all_pdf_pages):
                     user_content.append({
                         "type": "image_url",
