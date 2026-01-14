@@ -503,7 +503,12 @@ CRITICAL RULES:
 4. **LOCATIONS**: For flights, use airport codes and full names
    - Location format for flights: "From [Origin Airport Code] to [Destination Airport Code]"
    - Example: "From DFW (Dallas) to MCO (Orlando)"
-5. For prices, extract only numeric values (remove $, €, etc symbols)
+5. **PRICES - CRITICAL**:
+   - Put the TOTAL booking price on the FIRST flight element only
+   - Subsequent flight elements (return leg) should have price: null
+   - Extract only numeric values (remove $, €, etc symbols)
+   - Detect currency: USD for US bookings, EUR for European airlines booked in Europe
+   - Example: Total "$12,517.73" → put 12517.73 on FIRST flight, currency: "USD"
 6. **CONFIRMATION NUMBERS**: CRITICAL - Extract confirmation/booking numbers
    - ALL elements from the SAME booking share the SAME confirmation number
    - For round-trip flights: BOTH flights get the SAME confirmation number
