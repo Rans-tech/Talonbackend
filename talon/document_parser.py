@@ -96,9 +96,6 @@ class DocumentParser:
             supported_image_types = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp']
             supported_pdf_types = ['application/pdf']
 
-            # Initialize multi-page tracking
-            all_pdf_pages = None
-
             # Handle PDF files by extracting images from pages
             if file_type in supported_pdf_types:
                 if not PDF_SUPPORT:
@@ -112,10 +109,9 @@ class DocumentParser:
                         "success": False,
                         "error": "Failed to extract images from PDF. The file may be corrupted or password-protected."
                     }
-                # Store all PDF pages for multi-page processing
-                all_pdf_pages = pdf_images
-                print(f"Extracted {len(all_pdf_pages)} pages from PDF")
-                # Use first page for type check
+                # Use the first page image for processing
+                # Note: Multi-page PDFs may need all pages - for now using first page
+                print(f"Extracted {len(pdf_images)} pages from PDF, using first page")
                 file_content = pdf_images[0]
                 file_type = 'image/png'
 
@@ -300,13 +296,6 @@ FLIGHT EXAMPLE - Round-trip:
   }
 ]
 
-=== MULTI-PAGE DOCUMENT HANDLING ===
-- ANALYZE ALL PAGES - flight details are often spread across multiple pages
-- Outbound flight may be on page 1, return flight on page 2 or 3
-- Price/cost summary may be on a different page than flight times
-- Look for sections labeled "Return", "Inbound", "Return Journey"
-- Passenger and baggage info may be on separate pages
-
 CRITICAL EXTRACTION RULES:
 1. FINE PRINT IS GOLD: Scan every corner for cancellation policies, deadlines, fees
 2. CURRENCY: Detect actual currency - NEVER assume USD!
@@ -324,34 +313,7 @@ CRITICAL EXTRACTION RULES:
 11. Return ONLY the JSON object, no additional text
 12. SCAN ALL PAGES for complete information - DO NOT MISS THE RETURN FLIGHT"""
 
-            # Prepare the message for Vision API with ALL PDF pages
-            user_content = [
-                {
-                    "type": "text",
-                    "text": "Extract all travel information from this document and return structured JSON. IMPORTANT: This may be a multi-page document - analyze ALL pages shown to find all flights, dates, costs, and details."
-                }
-            ]
-
-            # Add all PDF pages to the message
-            if all_pdf_pages and len(all_pdf_pages) > 1:
-                for i, page_img in enumerate(all_pdf_pages):
-                    user_content.append({
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:image/png;base64,{page_img}",
-                            "detail": "high"
-                        }
-                    })
-                print(f"Sending {len(all_pdf_pages)} PDF pages to Vision API")
-            else:
-                user_content.append({
-                    "type": "image_url",
-                    "image_url": {
-                        "url": f"data:{file_type};base64,{file_content}",
-                        "detail": "high"
-                    }
-                })
-
+            # Prepare the message for Vision API
             messages = [
                 {
                     "role": "system",
@@ -359,7 +321,19 @@ CRITICAL EXTRACTION RULES:
                 },
                 {
                     "role": "user",
-                    "content": user_content
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "Extract all travel information from this document and return structured JSON."
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:{file_type};base64,{file_content}",
+                                "detail": "high"
+                            }
+                        }
+                    ]
                 }
             ]
 
