@@ -123,11 +123,28 @@ class SupabaseDB:
             return None
 
     def create_expense_from_element(self, trip_id, user_id, element_data, element_id):
-        """Creates an expense record linked to a trip element."""
+        """Creates an expense record linked to a trip element with currency conversion."""
         try:
-            price = element_data.get('price')
-            if not price or price <= 0:
+            from talon.currency_service import currency_service
+
+            original_amount = element_data.get('price')
+            if not original_amount or original_amount <= 0:
                 return None
+
+            # Get currency from parsed data (default USD)
+            original_currency = (element_data.get('currency') or 'USD').upper()
+
+            # Convert to USD if different currency
+            if original_currency != 'USD':
+                try:
+                    conversion = currency_service.convert_amount(original_amount, original_currency, 'USD')
+                    amount_usd = round(conversion['converted_amount'], 2)
+                    print(f"Currency conversion: {original_amount} {original_currency} -> {amount_usd} USD")
+                except Exception as conv_err:
+                    print(f"Currency conversion failed: {conv_err}, using original amount")
+                    amount_usd = original_amount
+            else:
+                amount_usd = original_amount
 
             element_type = element_data.get('type', 'other')
             category_map = {
@@ -151,21 +168,32 @@ class SupabaseDB:
                 expense_date = date.today().isoformat()
 
             conf_num = element_data.get('confirmation_number', 'N/A')
+
+            # Build notes with currency info
+            notes = f"Auto-created from parsed document. Confirmation: {conf_num}"
+            if original_currency != 'USD':
+                notes += f" | Original: {original_amount} {original_currency}"
+
             expense_data = {
                 'trip_id': trip_id,
                 'user_id': user_id,
-                'amount': price,
+                'amount': amount_usd,
+                'original_amount': original_amount,
+                'original_currency': original_currency,
                 'category': category,
                 'description': element_data.get('title', ''),
                 'expense_date': expense_date,
-                'notes': "Auto-created from parsed document. Confirmation: " + str(conf_num),
+                'notes': notes,
                 'source': 'parsed',
                 'trip_element_id': element_id
             }
 
             response = self.client.table('expenses').insert(expense_data).execute()
             if response.data:
-                print(f"Created expense for element {element_id}: ${price} ({category})")
+                if original_currency != 'USD':
+                    print(f"Created expense: {original_amount} {original_currency} = ${amount_usd} USD ({category})")
+                else:
+                    print(f"Created expense: ${amount_usd} USD ({category})")
                 return response.data[0]
             return None
         except Exception as e:
