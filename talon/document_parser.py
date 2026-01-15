@@ -460,7 +460,7 @@ Return ONLY valid JSON in this exact format:
   "document_type": "flight|hotel|car_rental|activity|dining|transport|other",
   "elements": [
     {
-      "type": "flight|hotel|activity|dining|transport|other",
+      "type": "flight|hotel_checkin|hotel_checkout|activity|dining|transport|other",
       "title": "Brief descriptive title",
       "start_datetime": "ISO 8601 format (YYYY-MM-DDTHH:MM:SS) or null",
       "end_datetime": "ISO 8601 format (YYYY-MM-DDTHH:MM:SS) or null",
@@ -517,9 +517,13 @@ CRITICAL RULES:
 7. Include all other details like contact info, seat assignments, amenities
 8. **TITLES**: Make descriptive
    - Flight: "[Airline] [Flight#] from [Origin] to [Dest]"
-   - Hotel: "[Hotel Name] Stay"
+   - Hotel Check-in: "Check-in: [Hotel Name]"
+   - Hotel Check-out: "Check-out: [Hotel Name]"
 9. Return ONLY the JSON object, no additional text
 10. If the text doesn't contain travel information, return document_type: "other" with empty elements array
+11. **HOTELS - CREATE TWO ELEMENTS**: For HOTEL reservations, ALWAYS create TWO separate elements:
+   - **hotel_checkin**: type="hotel_checkin", title="Check-in: [Hotel Name]", start_datetime=check-in date/time (default 4:00 PM if not specified), price=FULL booking price
+   - **hotel_checkout**: type="hotel_checkout", title="Check-out: [Hotel Name]", start_datetime=check-out date/time (default 11:00 AM if not specified), price=null, SAME confirmation_number as check-in
 
 FLIGHT PARSING EXAMPLE:
 If you see:
@@ -535,7 +539,28 @@ Element 1: Outbound flight
 Element 2: Return flight
   - start_datetime: 2025-11-12T18:00:00 (NO timezone)
   - end_datetime: 2025-11-12T20:45:00 (NO timezone)
-  - confirmation_number: "ABC123" (SAME as outbound)"""
+  - confirmation_number: "ABC123" (SAME as outbound)
+
+HOTEL PARSING EXAMPLE:
+If you see:
+"Big Sky Resort - Confirmation #1144RW
+Check-in: Feb 26, 2026
+Check-out: Mar 3, 2026
+Total: $7,279.25"
+
+You MUST create 2 separate hotel elements:
+Element 1: hotel_checkin
+  - type: "hotel_checkin"
+  - title: "Check-in: Big Sky Resort"
+  - start_datetime: 2026-02-26T16:00:00 (default 4pm)
+  - price: 7279.25
+  - confirmation_number: "1144RW"
+Element 2: hotel_checkout
+  - type: "hotel_checkout"
+  - title: "Check-out: Big Sky Resort"
+  - start_datetime: 2026-03-03T11:00:00 (default 11am)
+  - price: null
+  - confirmation_number: "1144RW" (SAME as check-in)"""
 
             # Call OpenAI GPT-4 (text model, not vision)
             response = openai.chat.completions.create(
