@@ -2280,3 +2280,117 @@ def get_learning_report():
     except Exception as e:
         print(f"Error generating report: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# @route: POST /api/route/notes
+@app.route('/api/route/notes', methods=['POST', 'OPTIONS'])
+def generate_route_notes():
+    """
+    Generate smart route notes/awareness information for a driving route.
+    Uses AI to provide helpful information about the route (mountain passes,
+    seasonal considerations, traffic patterns, rest stops, etc.)
+    """
+    if request.method == 'OPTIONS':
+        return '', 200
+
+    try:
+        import openai
+        from datetime import datetime
+
+        data = request.json or {}
+        from_location = data.get('from_location', '')
+        to_location = data.get('to_location', '')
+        distance_miles = data.get('distance_miles', 0)
+        duration_minutes = data.get('duration_minutes', 0)
+        travel_date = data.get('travel_date', '')
+
+        if not from_location or not to_location:
+            return jsonify({
+                'success': False,
+                'error': 'Missing from_location or to_location'
+            }), 400
+
+        # Determine season from travel date
+        season = "unknown"
+        if travel_date:
+            try:
+                date_obj = datetime.strptime(travel_date, '%Y-%m-%d')
+                month = date_obj.month
+                if month in [12, 1, 2]:
+                    season = "winter"
+                elif month in [3, 4, 5]:
+                    season = "spring"
+                elif month in [6, 7, 8]:
+                    season = "summer"
+                else:
+                    season = "fall/autumn"
+            except:
+                pass
+
+        # Format duration for the prompt
+        hours = duration_minutes // 60
+        mins = duration_minutes % 60
+        duration_str = f"{hours}h {mins}m" if hours > 0 else f"{mins} minutes"
+
+        # Generate smart route notes using OpenAI
+        openai_client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+        prompt = f"""You are a travel awareness assistant. Generate 2-4 SHORT, helpful notes about this driving route. Focus ONLY on important awareness items.
+
+Route: {from_location} → {to_location}
+Distance: {distance_miles} miles
+Drive Time: {duration_str}
+Travel Date: {travel_date} ({season})
+
+Generate notes about:
+- Mountain passes or challenging terrain (especially winter driving concerns)
+- Major cities or traffic hotspots along the route
+- Notable rest stop areas for long drives
+- Seasonal considerations (snow, heat, flooding)
+- Any unique route characteristics (desert, coastal, forest)
+
+RULES:
+1. Keep each note to ONE short sentence (max 15 words)
+2. Only include genuinely useful awareness info
+3. If the route is straightforward with nothing notable, just say "Standard highway route - no special considerations"
+4. Separate notes with line breaks
+5. Don't include obvious advice like "take breaks" or "check weather"
+6. Be specific to THIS route, not generic driving advice
+
+Example good output:
+"I-70 crosses Vail Pass (10,600 ft) - check conditions in winter
+Major traffic through Denver metro area - plan for delays
+Glenwood Canyon section is scenic but no stopping allowed"
+
+Generate route notes:"""
+
+        response = openai_client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": "You are a helpful travel route advisor. Be concise and specific."},
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=200,
+            temperature=0.3
+        )
+
+        route_notes = response.choices[0].message.content.strip()
+
+        return jsonify({
+            'success': True,
+            'route_notes': route_notes,
+            'from_location': from_location,
+            'to_location': to_location,
+            'season': season
+        })
+
+    except Exception as e:
+        print(f"Error generating route notes: {e}")
+        import traceback
+        traceback.print_exc()
+        # Return empty notes on error - don't fail the whole request
+        return jsonify({
+            'success': True,
+            'route_notes': '',
+            'error': str(e)
+        })
