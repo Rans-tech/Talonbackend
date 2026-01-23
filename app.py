@@ -2288,6 +2288,7 @@ def calculate_route():
     """
     Calculate driving route using Google Maps Directions API.
     Returns distance and duration with more accurate estimates than OSRM.
+    Falls back to place names if coordinates return ZERO_RESULTS.
     """
     if request.method == 'OPTIONS':
         return '', 200
@@ -2300,12 +2301,9 @@ def calculate_route():
         from_lon = data.get('from_lon')
         to_lat = data.get('to_lat')
         to_lon = data.get('to_lon')
-
-        if not all([from_lat, from_lon, to_lat, to_lon]):
-            return jsonify({
-                'success': False,
-                'error': 'Missing coordinates. Required: from_lat, from_lon, to_lat, to_lon'
-            }), 400
+        # Also accept place names for fallback
+        from_name = data.get('from_name', '')
+        to_name = data.get('to_name', '')
 
         # Get Google Maps API key from environment
         google_api_key = os.getenv('GOOGLE_MAPS_API_KEY')
@@ -2315,17 +2313,41 @@ def calculate_route():
                 'error': 'Google Maps API key not configured'
             }), 500
 
-        # Call Google Maps Directions API
         url = 'https://maps.googleapis.com/maps/api/directions/json'
-        params = {
-            'origin': f'{from_lat},{from_lon}',
-            'destination': f'{to_lat},{to_lon}',
-            'mode': 'driving',
-            'key': google_api_key
-        }
 
-        response = requests.get(url, params=params, timeout=10)
-        response_data = response.json()
+        # Helper function to call the API
+        def call_directions_api(origin, destination):
+            params = {
+                'origin': origin,
+                'destination': destination,
+                'mode': 'driving',
+                'key': google_api_key
+            }
+            resp = requests.get(url, params=params, timeout=10)
+            return resp.json()
+
+        response_data = None
+
+        # Try with coordinates first if available
+        if all([from_lat, from_lon, to_lat, to_lon]):
+            response_data = call_directions_api(
+                f'{from_lat},{from_lon}',
+                f'{to_lat},{to_lon}'
+            )
+
+            # If ZERO_RESULTS with coordinates, try place names as fallback
+            if response_data.get('status') == 'ZERO_RESULTS' and from_name and to_name:
+                print(f"ZERO_RESULTS with coordinates, trying place names: {from_name} -> {to_name}")
+                response_data = call_directions_api(from_name, to_name)
+
+        # If no coordinates, try place names directly
+        elif from_name and to_name:
+            response_data = call_directions_api(from_name, to_name)
+        else:
+            return jsonify({
+                'success': False,
+                'error': 'Missing location data. Provide coordinates or place names.'
+            }), 400
 
         if response_data.get('status') != 'OK':
             error_msg = response_data.get('error_message', response_data.get('status', 'Unknown error'))
