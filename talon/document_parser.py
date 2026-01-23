@@ -826,7 +826,10 @@ CRITICAL RULES:
 4. **Share money/time savers** - skip lines, discounts, crowd strategies with specific actions
 5. **Anticipate problems** - dietary needs with phone numbers, weather prep, timing conflicts
 
-**AVOID obvious tasks** like "pack clothes" or "check in for flight"
+**AVOID:**
+- Obvious tasks like "pack clothes" or "check in for flight"
+- NEVER suggest "arrange transportation" or "book ground transportation" for elements with transport_type="driving" - that means they're driving their OWN car!
+- NEVER suggest booking for personal vehicle trips - look at details.transport_type field
 
 Return ONLY valid JSON:
 {
@@ -864,15 +867,19 @@ Knowledge base context (use this to provide specific intel):
 
 Generate 8-12 SMART tasks that PROVIDE INSIGHTS (not homework):
 
+**CRITICAL RULES:**
+- If a transport element has details.transport_type="driving" or "driving_personal", DO NOT suggest "book transportation" - they're driving their OWN CAR
+- Only suggest transportation booking if there's NO transport element for that leg, or if transport_type is "rental_car" or "uber_taxi"
+
 **Required task types:**
-1. Airport-to-hotel transportation (specific: Uber/shuttle, timing based on flight, cost, insider tip about Level 2 vs Level 1)
+1. Airport-to-hotel transportation (ONLY if no transport element exists for this leg - skip if they have personal driving planned)
 2. Venue-specific intel (signature dishes with prices, must-knows, phone numbers for calls, insider timing tips)
 3. Required apps with setup deadlines (exactly when to download, what to link, why it matters)
 4. Advance booking opportunities (Lightning Lane, Genie+, etc. with exact times and costs)
 5. Dietary/special needs with specific phone numbers and timing for calls
 6. Time-saving strategies (early arrival times, crowd patterns, skip-the-line options)
 7. Hidden costs or money-savers (free shuttles, discount opportunities)
-8. Between-venue transportation gaps (specific times, costs, options)
+8. Between-venue transportation gaps (ONLY if no transport exists - skip if driving personal vehicle)
 
 Each task should answer: What? When? How much? Who to call? Why? Any insider tips?"""
 
