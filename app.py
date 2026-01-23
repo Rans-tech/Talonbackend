@@ -2282,6 +2282,96 @@ def get_learning_report():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+# @route: POST /api/route/calculate
+@app.route('/api/route/calculate', methods=['POST', 'OPTIONS'])
+def calculate_route():
+    """
+    Calculate driving route using Google Maps Directions API.
+    Returns distance and duration with more accurate estimates than OSRM.
+    """
+    if request.method == 'OPTIONS':
+        return '', 200
+
+    try:
+        import requests
+
+        data = request.json or {}
+        from_lat = data.get('from_lat')
+        from_lon = data.get('from_lon')
+        to_lat = data.get('to_lat')
+        to_lon = data.get('to_lon')
+
+        if not all([from_lat, from_lon, to_lat, to_lon]):
+            return jsonify({
+                'success': False,
+                'error': 'Missing coordinates. Required: from_lat, from_lon, to_lat, to_lon'
+            }), 400
+
+        # Get Google Maps API key from environment
+        google_api_key = os.getenv('GOOGLE_MAPS_API_KEY')
+        if not google_api_key:
+            return jsonify({
+                'success': False,
+                'error': 'Google Maps API key not configured'
+            }), 500
+
+        # Call Google Maps Directions API
+        url = 'https://maps.googleapis.com/maps/api/directions/json'
+        params = {
+            'origin': f'{from_lat},{from_lon}',
+            'destination': f'{to_lat},{to_lon}',
+            'mode': 'driving',
+            'key': google_api_key
+        }
+
+        response = requests.get(url, params=params, timeout=10)
+        response_data = response.json()
+
+        if response_data.get('status') != 'OK':
+            error_msg = response_data.get('error_message', response_data.get('status', 'Unknown error'))
+            print(f"Google Directions API error: {error_msg}")
+            return jsonify({
+                'success': False,
+                'error': f'Google Directions API: {error_msg}'
+            }), 400
+
+        # Extract route info from response
+        route = response_data['routes'][0]
+        leg = route['legs'][0]
+
+        distance_meters = leg['distance']['value']
+        duration_seconds = leg['duration']['value']
+
+        # Convert to miles and minutes
+        distance_miles = round(distance_meters / 1609.34)
+        duration_minutes = round(duration_seconds / 60)
+
+        return jsonify({
+            'success': True,
+            'distance_miles': distance_miles,
+            'duration_minutes': duration_minutes,
+            'distance_text': leg['distance']['text'],
+            'duration_text': leg['duration']['text'],
+            'start_address': leg.get('start_address', ''),
+            'end_address': leg.get('end_address', '')
+        })
+
+    except requests.exceptions.Timeout:
+        print("Google Directions API timeout")
+        return jsonify({
+            'success': False,
+            'error': 'Route calculation timed out'
+        }), 504
+    except Exception as e:
+        print(f"Error calculating route: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
 # @route: POST /api/route/notes
 @app.route('/api/route/notes', methods=['POST', 'OPTIONS'])
 def generate_route_notes():
