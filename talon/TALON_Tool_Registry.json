@@ -1,0 +1,96 @@
+{
+  "version": "1.0",
+  "purpose": "Central registry of tools available to TALON agents via function calling. Tool names are stable internal IDs.",
+  "tools": [
+    {
+      "tool_id": "weather_forecast",
+      "capability": "Weather intelligence",
+      "description": "Retrieve forecast and historical norms for a destination and date range.",
+      "inputs": {
+        "location": "string (city, region, or lat/long)",
+        "start_date": "YYYY-MM-DD",
+        "end_date": "YYYY-MM-DD"
+      },
+      "outputs": {
+        "summary": "string",
+        "high_low_f": "string",
+        "precip_probability": "number",
+        "alerts": "array"
+      },
+      "limits": {
+        "forecast_horizon_days": 16
+      },
+      "fallback_priority": 1,
+      "safe_usage": "Planning guidance only. Never guarantee conditions or mark events confirmed."
+    },
+    {
+      "tool_id": "drive_time",
+      "capability": "Distance & duration calculation",
+      "description": "Calculate realistic driving distance and time between two locations.",
+      "inputs": {
+        "origin": "string",
+        "destination": "string"
+      },
+      "outputs": {
+        "distance_miles": "number",
+        "estimated_drive_hours": "number"
+      },
+      "limits": {
+        "real_time_traffic_days": 7
+      },
+      "fallback_priority": 1,
+      "safe_usage": "Always add buffer time; never assume continuous driving."
+    },
+    {
+      "tool_id": "attraction_search",
+      "capability": "Activities & attractions discovery",
+      "description": "Find attractions and activities for a destination by interest type.",
+      "inputs": {
+        "location": "string",
+        "activity_type": "string"
+      },
+      "outputs": {
+        "results": "array"
+      },
+      "limits": {
+        "max_results": 10
+      },
+      "fallback_priority": 2,
+      "safe_usage": "Availability and hours may vary seasonally."
+    },
+    {
+      "tool_id": "restaurant_search",
+      "capability": "Dining recommendations",
+      "description": "Find dining options based on location and dietary needs.",
+      "inputs": {
+        "location": "string",
+        "dietary": "array"
+      },
+      "outputs": {
+        "results": "array"
+      },
+      "limits": {
+        "max_results": 10
+      },
+      "fallback_priority": 2,
+      "safe_usage": "Does not imply reservation availability."
+    },
+    {
+      "tool_id": "document_parse",
+      "capability": "Document ingestion",
+      "description": "Parse PDFs and images to extract itinerary, booking, or receipt data.",
+      "inputs": {
+        "file_id": "string"
+      },
+      "outputs": {
+        "extracted_text": "string",
+        "entities": "array"
+      },
+      "limits": {
+        "file_size_mb": 25
+      },
+      "fallback_priority": 1,
+      "safe_usage": "Parsed data must be validated by Verifier before confirmation."
+    }
+  ]
+}

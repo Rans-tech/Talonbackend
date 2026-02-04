@@ -18,9 +18,13 @@ import io
 import uuid
 import secrets
 import resend
+import logging
+import json
 from dotenv import load_dotenv
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 # Initialize Stripe
 stripe.api_key = os.getenv('STRIPE_SECRET_KEY')
@@ -97,6 +101,166 @@ def talon_chat():
     
     response = talon.process_message(message)
     return jsonify({'response': response})
+
+# ==================================================================
+# Command Center endpoints (Houston + Atlas)
+# ==================================================================
+
+# @route: POST /api/command-center/chat
+@app.route('/api/command-center/chat', methods=['POST'])
+def command_center_chat():
+    """Send a message to Houston. Routes to Atlas for planning requests."""
+    try:
+        data = request.json
+        message = data.get('message', '')
+        conversation_id = data.get('conversation_id') or str(uuid.uuid4())
+        trip_id = data.get('trip_id')
+        attachment_text = data.get('attachment_text')
+
+        # Optionally fetch user profile for Atlas context
+        user_profile = None
+        user_id = data.get('user_id')
+        if user_id:
+            profile_data = db_client.get_user_profile(user_id)
+            if profile_data:
+                user_profile = profile_data[0] if isinstance(profile_data, list) else profile_data
+
+        result = talon.chat(
+            message=message,
+            conversation_id=conversation_id,
+            trip_id=trip_id,
+            attachment_text=attachment_text,
+            user_profile=user_profile,
+        )
+        return jsonify({'success': True, **result})
+    except Exception as e:
+        logger.error("Command center chat error: %s", e)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# @route: POST /api/command-center/upload
+@app.route('/api/command-center/upload', methods=['POST'])
+def command_center_upload():
+    """Upload a PDF or image, extract text for Atlas context."""
+    try:
+        data = request.json
+        file_content = data.get('file_content')  # base64
+        file_type = data.get('file_type', 'application/pdf')
+
+        if not file_content:
+            return jsonify({'success': False, 'error': 'Missing file_content'}), 400
+
+        # Use existing document parser to extract text
+        extracted_text = ""
+        summary = ""
+
+        if file_type == 'application/pdf' or file_type.endswith('pdf'):
+            # Use PDF text extraction from document_parser
+            try:
+                import fitz
+                pdf_bytes = base64.b64decode(file_content)
+                doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+                pages_text = []
+                for page_num in range(len(doc)):
+                    page = doc[page_num]
+                    text = page.get_text()
+                    if text.strip():
+                        pages_text.append(f"--- Page {page_num + 1} ---\n{text}")
+                doc.close()
+                extracted_text = "\n\n".join(pages_text)
+            except Exception as pdf_err:
+                logger.error("PDF extraction failed: %s", pdf_err)
+                # Fallback to document parser
+                result = document_parser.parse_travel_document(file_content, file_type)
+                if result.get('success'):
+                    extracted_text = json.dumps(result.get('data', {}))
+        else:
+            # Image — run through vision parser for text extraction
+            result = document_parser.parse_travel_document(file_content, file_type)
+            if result.get('success'):
+                extracted_text = json.dumps(result.get('data', {}))
+
+        if extracted_text:
+            summary = extracted_text[:300] + ("..." if len(extracted_text) > 300 else "")
+
+        attachment_id = str(uuid.uuid4())
+
+        return jsonify({
+            'success': True,
+            'attachment_id': attachment_id,
+            'extracted_text': extracted_text,
+            'summary': summary,
+        })
+    except Exception as e:
+        logger.error("Command center upload error: %s", e)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# @route: POST /api/command-center/commit
+@app.route('/api/command-center/commit', methods=['POST'])
+def command_center_commit():
+    """Commit finalized itinerary: create trip + all trip_elements in Supabase."""
+    try:
+        data = request.json
+        conversation_id = data.get('conversation_id')
+        trip_name = data.get('trip_name')
+        budget = data.get('budget')
+        user_id = data.get('user_id')
+        organization_id = data.get('organization_id')
+
+        if not conversation_id:
+            return jsonify({'success': False, 'error': 'Missing conversation_id'}), 400
+        if not user_id:
+            return jsonify({'success': False, 'error': 'Missing user_id'}), 400
+
+        # Houston extracts structured elements from the draft
+        commit_result = talon.commit(conversation_id, trip_name=trip_name, budget=budget)
+        if not commit_result.get('success'):
+            return jsonify(commit_result), 400
+
+        # Create the trip in Supabase
+        trip_data = {
+            'user_id': user_id,
+            'title': commit_result.get('trip_name', 'My Trip'),
+            'destination': commit_result.get('destination', ''),
+            'start_date': commit_result.get('start_date'),
+            'end_date': commit_result.get('end_date'),
+            'status': 'planned',
+        }
+        if budget:
+            trip_data['budget'] = budget
+        if organization_id:
+            trip_data['organization_id'] = organization_id
+
+        trip_response = db_client.client.table('trips').insert(trip_data).execute()
+        if not trip_response.data:
+            return jsonify({'success': False, 'error': 'Failed to create trip'}), 500
+
+        trip = trip_response.data[0]
+        trip_id = trip['id']
+
+        # Create all trip_elements
+        created_elements = []
+        for element in commit_result.get('elements', []):
+            try:
+                created = db_client.create_trip_element(trip_id, element)
+                if created:
+                    created_elements.append(created)
+            except Exception as el_err:
+                logger.error("Error creating element: %s", el_err)
+                continue
+
+        return jsonify({
+            'success': True,
+            'trip_id': trip_id,
+            'trip': trip,
+            'elements_created': len(created_elements),
+            'elements': created_elements,
+        })
+    except Exception as e:
+        logger.error("Command center commit error: %s", e)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 
 @app.route('/api/monitoring/weather', methods=['GET'])
 def get_weather_monitoring():
