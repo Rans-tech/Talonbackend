@@ -262,6 +262,153 @@ def command_center_commit():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+# ------------------------------------------------------------------
+# Agent Status — TALON Agent Wheel data
+# ------------------------------------------------------------------
+@app.route('/api/agents/status', methods=['GET'])
+def get_agents_status():
+    """Return status for all 8 TALON agents. Houston & Atlas are live; others are standby."""
+    user_id = request.args.get('user_id')
+
+    # Gather real metrics for Houston & Atlas
+    houston_actions = []
+    atlas_actions = []
+    trips_monitored = 0
+    pending_elements = 0
+
+    if user_id:
+        try:
+            trips_resp = db_client.client.table('trips').select('id, name, start_date').eq('user_id', user_id).eq('archived', False).execute()
+            trips = trips_resp.data or []
+            trips_monitored = len(trips)
+
+            # Count pending elements across all trips
+            trip_ids = [t['id'] for t in trips]
+            if trip_ids:
+                els_resp = db_client.client.table('trip_elements').select('id, status, type, title, trip_id').in_('trip_id', trip_ids).execute()
+                elements = els_resp.data or []
+                pending_elements = sum(1 for e in elements if e.get('status') == 'pending')
+
+                # Build recent actions from latest elements
+                sorted_els = sorted(elements, key=lambda e: e.get('created_at', ''), reverse=True)
+                for el in sorted_els[:3]:
+                    trip_name = next((t['name'] for t in trips if t['id'] == el.get('trip_id')), 'Trip')
+                    atlas_actions.append({
+                        'ts': el.get('created_at', ''),
+                        'label': f"Planned {el.get('type', 'element')}: {el.get('title', 'Untitled')}",
+                        'trip_id': el.get('trip_id'),
+                    })
+
+            # Houston actions — recent trips created
+            for t in sorted(trips, key=lambda x: x.get('start_date', ''), reverse=True)[:3]:
+                houston_actions.append({
+                    'ts': t.get('start_date', ''),
+                    'label': f"Monitoring trip: {t.get('name', 'Unnamed')}",
+                    'trip_id': t['id'],
+                })
+        except Exception as e:
+            logger.error("Agent status data fetch error: %s", e)
+
+    agents = [
+        {
+            'agent': 'Houston',
+            'status': 'active',
+            'monitoring': [
+                f'{trips_monitored} active trip{"s" if trips_monitored != 1 else ""}',
+                f'{pending_elements} pending booking{"s" if pending_elements != 1 else ""}',
+                'Command Center ready',
+            ],
+            'recent_actions': houston_actions,
+            'severity': 'info' if trips_monitored > 0 else 'none',
+        },
+        {
+            'agent': 'Atlas',
+            'status': 'active',
+            'monitoring': [
+                'Itinerary planning engine',
+                'Day-by-day time-blocking',
+                'Profile-aware recommendations',
+            ],
+            'recent_actions': atlas_actions,
+            'severity': 'info' if atlas_actions else 'none',
+        },
+        {
+            'agent': 'Churchill',
+            'status': 'standby',
+            'monitoring': [
+                'Flight disruption detection',
+                'Auto-rebooking protocols',
+                'Compensation claim filing',
+                'Cascade impact analysis',
+            ],
+            'recent_actions': [],
+            'severity': 'none',
+        },
+        {
+            'agent': 'Cassandra',
+            'status': 'standby',
+            'monitoring': [
+                'Weather pattern forecasting',
+                'Security threat assessment',
+                'Travel advisory tracking',
+                'Risk scoring models',
+            ],
+            'recent_actions': [],
+            'severity': 'none',
+        },
+        {
+            'agent': 'Ledger',
+            'status': 'standby',
+            'monitoring': [
+                'Price-drop detection',
+                'EU261 claim eligibility',
+                'Budget optimization',
+                'Currency arbitrage',
+            ],
+            'recent_actions': [],
+            'severity': 'none',
+        },
+        {
+            'agent': 'Scout',
+            'status': 'standby',
+            'monitoring': [
+                'Local event discovery',
+                'Restaurant & attraction intel',
+                'Hidden-gem sourcing',
+                'Real-time crowd data',
+            ],
+            'recent_actions': [],
+            'severity': 'none',
+        },
+        {
+            'agent': 'Verifier',
+            'status': 'standby',
+            'monitoring': [
+                'Booking confirmation tracking',
+                'Document validation',
+                'Itinerary cross-referencing',
+                'Receipt archival',
+            ],
+            'recent_actions': [],
+            'severity': 'none',
+        },
+        {
+            'agent': 'Consul',
+            'status': 'standby',
+            'monitoring': [
+                'Multi-traveler coordination',
+                'Executive travel protocols',
+                'Corporate policy compliance',
+                'VIP service orchestration',
+            ],
+            'recent_actions': [],
+            'severity': 'none',
+        },
+    ]
+
+    return jsonify({'success': True, 'agents': agents, 'trips_monitored': trips_monitored})
+
+
 @app.route('/api/monitoring/weather', methods=['GET'])
 def get_weather_monitoring():
     """Get weather monitoring data"""
