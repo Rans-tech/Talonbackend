@@ -17,22 +17,56 @@ class WeatherMonitor:
         self.geocode_url = "https://geocoding-api.open-meteo.com/v1/search"
         self.weather_url = "https://api.open-meteo.com/v1/forecast"
 
+    US_STATE_MAP = {
+        "AL": "Alabama", "AK": "Alaska", "AZ": "Arizona", "AR": "Arkansas",
+        "CA": "California", "CO": "Colorado", "CT": "Connecticut", "DE": "Delaware",
+        "FL": "Florida", "GA": "Georgia", "HI": "Hawaii", "ID": "Idaho",
+        "IL": "Illinois", "IN": "Indiana", "IA": "Iowa", "KS": "Kansas",
+        "KY": "Kentucky", "LA": "Louisiana", "ME": "Maine", "MD": "Maryland",
+        "MA": "Massachusetts", "MI": "Michigan", "MN": "Minnesota", "MS": "Mississippi",
+        "MO": "Missouri", "MT": "Montana", "NE": "Nebraska", "NV": "Nevada",
+        "NH": "New Hampshire", "NJ": "New Jersey", "NM": "New Mexico", "NY": "New York",
+        "NC": "North Carolina", "ND": "North Dakota", "OH": "Ohio", "OK": "Oklahoma",
+        "OR": "Oregon", "PA": "Pennsylvania", "RI": "Rhode Island", "SC": "South Carolina",
+        "SD": "South Dakota", "TN": "Tennessee", "TX": "Texas", "UT": "Utah",
+        "VT": "Vermont", "VA": "Virginia", "WA": "Washington", "WV": "West Virginia",
+        "WI": "Wisconsin", "WY": "Wyoming", "DC": "District of Columbia",
+    }
+
     def _geocode_location(self, location: str) -> tuple:
         """Convert location name to lat/lon coordinates."""
-        # Try city name first (most reliable), then full string
+        # Extract state hint from "City, ST" pattern
+        state_hint = None
+        parts = [p.strip() for p in location.split(",")]
+        for part in parts:
+            if len(part) == 2 and part.isupper() and part in self.US_STATE_MAP:
+                state_hint = self.US_STATE_MAP[part]
+                break
+
+        # Build search terms: city name first, then full string
         search_terms = []
         if "," in location:
-            search_terms.append(location.split(",")[0].strip())
+            search_terms.append(parts[0])
         search_terms.append(location)
 
         for search_term in search_terms:
             try:
-                params = {"name": search_term, "count": 1, "language": "en", "format": "json"}
+                params = {"name": search_term, "count": 5, "language": "en", "format": "json"}
                 response = requests.get(self.geocode_url, params=params, timeout=10)
                 response.raise_for_status()
                 data = response.json()
 
                 if "results" in data and len(data["results"]) > 0:
+                    # If we have a state hint, find the matching result
+                    if state_hint:
+                        for result in data["results"]:
+                            if result.get("admin1", "").lower() == state_hint.lower():
+                                admin1 = result.get("admin1", "")
+                                name = result.get("name", search_term)
+                                resolved = f"{name}, {admin1}" if admin1 else name
+                                return (result["latitude"], result["longitude"], resolved)
+
+                    # Fall back to first result
                     result = data["results"][0]
                     admin1 = result.get("admin1", "")
                     name = result.get("name", search_term)
