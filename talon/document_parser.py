@@ -698,24 +698,34 @@ Element 2: hotel_checkout
             
             # Create receipt-specific prompt with currency detection
             system_prompt = """You are a receipt parser. Extract expense information from receipt images.
+You can read traditional paper/digital receipts AND gas pump displays, fuel station screens, and similar non-traditional formats.
 
 Return ONLY valid JSON in this exact format:
 {
   "amount": 45.67,
   "merchant": "Restaurant/Store Name",
   "date": "2025-11-05",
-  "category": "food_dining|accommodation|transportation|tours_activities|shopping|other",
+  "category": "food_dining|accommodation|transportation|tours_activities|shopping|fuel|other",
   "description": "Brief description of purchase",
   "currency": "USD"
 }
 
 Category guidelines:
+- fuel: Gas pumps, fuel station displays, gasoline, diesel, EV charging stations. Look for "This Sale", "Gallons", "Price/Gallon", fuel grade indicators (Regular, Premium, Diesel), pump displays showing dollar amounts and gallon counts.
 - food_dining: Restaurants, cafes, bars, food delivery
 - accommodation: Hotels, Airbnb, lodging
-- transportation: Uber, taxi, gas, parking, public transit
+- transportation: Uber, taxi, parking, public transit, tolls
 - tours_activities: Tours, attractions, entertainment, tickets
 - shopping: Retail purchases, souvenirs, clothing
 - other: Everything else
+
+GAS PUMP / FUEL RECOGNITION:
+- Gas pump displays typically show "This Sale" (dollar amount) and "Gallons" (volume)
+- The "This Sale" amount IS the total expense amount
+- If no merchant name is visible, use "Gas Station" as merchant
+- If no date is visible, leave date empty or use today's date
+- Always categorize as "fuel" when you see pump displays, fuel gauges, or gas station imagery
+- Include gallons pumped in the description if visible (e.g., "18.281 gallons of fuel")
 
 CURRENCY DETECTION - CRITICAL:
 - Look for currency symbols: $ (USD), € (EUR), £ (GBP), ¥ (JPY/CNY), ₹ (INR), etc.
@@ -743,7 +753,7 @@ CRITICAL RULES:
                     "content": [
                         {
                             "type": "text",
-                            "text": "Extract expense information from this receipt and return structured JSON."
+                            "text": "Extract expense information from this image. It could be a paper receipt, digital receipt, gas pump display, fuel station screen, or any other proof of purchase. Return structured JSON."
                         },
                         {
                             "type": "image_url",
