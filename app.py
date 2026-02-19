@@ -415,6 +415,17 @@ def get_weather_monitoring():
     location = request.args.get('location', 'Orlando, FL')
     return jsonify(weather_monitor.get_status(location))
 
+@app.route('/api/monitoring/forecast', methods=['GET'])
+def get_weather_forecast():
+    """Get multi-day weather forecast for a location."""
+    location = request.args.get('location', 'Orlando, FL')
+    days = int(request.args.get('days', '4'))
+    from datetime import datetime, timedelta
+    start = datetime.now().strftime('%Y-%m-%d')
+    end = (datetime.now() + timedelta(days=days - 1)).strftime('%Y-%m-%d')
+    return jsonify(weather_monitor.get_forecast(location, start, end))
+
+
 @app.route('/api/monitoring/prices', methods=['GET'])
 def get_price_monitoring():
     """Get price monitoring data"""
