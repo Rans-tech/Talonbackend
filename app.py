@@ -458,7 +458,7 @@ def resolve_trip_cities(trip_id: str):
             el_type = el.get('type', '')
             title = el.get('title', '')
             loc = el.get('location', '')
-            details = el.get('details') or {}
+            details = el.get('details') if isinstance(el.get('details'), dict) else {}
             from_loc = details.get('from_location', '')
             to_loc = details.get('to_location', '')
             line = f"- {el_type}: \"{title}\""
