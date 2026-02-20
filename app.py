@@ -426,6 +426,94 @@ def get_weather_forecast():
     return jsonify(weather_monitor.get_forecast(location, start, end))
 
 
+@app.route('/api/trips/<trip_id>/cities', methods=['GET'])
+def resolve_trip_cities(trip_id: str):
+    """AI-powered extraction of distinct destination cities from trip elements."""
+    try:
+        # Fetch trip
+        trip = db_client.get_trip(trip_id)
+        if not trip:
+            return jsonify({'success': False, 'error': 'Trip not found'}), 404
+
+        # Fetch elements
+        els_resp = db_client.client.table('trip_elements') \
+            .select('type, title, location, start_datetime, details') \
+            .eq('trip_id', trip_id) \
+            .order('start_datetime') \
+            .execute()
+        elements = els_resp.data or []
+
+        if not elements:
+            # No elements — fall back to trip destination
+            dest = trip.get('destination', '')
+            return jsonify({'success': True, 'cities': [dest] if dest else []})
+
+        # Build compact location summary for GPT
+        lines = []
+        lines.append(f"Trip destination: {trip.get('destination', 'Unknown')}")
+        lines.append(f"Trip dates: {trip.get('start_date', '?')} to {trip.get('end_date', '?')}")
+        lines.append("")
+        lines.append("Elements (chronological):")
+        for el in elements:
+            el_type = el.get('type', '')
+            title = el.get('title', '')
+            loc = el.get('location', '')
+            details = el.get('details') or {}
+            from_loc = details.get('from_location', '')
+            to_loc = details.get('to_location', '')
+            line = f"- {el_type}: \"{title}\""
+            if from_loc and to_loc:
+                line += f" | from: {from_loc} | to: {to_loc}"
+            elif loc:
+                line += f" | location: {loc}"
+            lines.append(line)
+
+        element_summary = "\n".join(lines)
+
+        import openai
+        client = openai.OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a travel geography expert. Given these trip elements, identify the distinct "
+                        "destination CITIES the traveler will visit. Rules:\n"
+                        "- Return actual cities only (not hotel names, resort names, street addresses, or neighborhoods)\n"
+                        "- Use context clues: if driving from Frisco, CO to Under Canvas Zion in Virgin, UT, "
+                        "the destination city is Zion/Springdale, UT area — use the well-known city name\n"
+                        "- Collapse nearby locations to the primary city (e.g., Pacific Beach → San Diego, CA)\n"
+                        "- Include the starting city if it's a road trip origin\n"
+                        "- Include transit/stopover cities where the traveler stays overnight\n"
+                        "- Skip layover airports with no meaningful stop\n"
+                        "- Format each city as 'City, ST' for US (2-letter state) or 'City, Country' for international\n"
+                        "- Return JSON: {\"cities\": [\"City, ST\", ...]} in chronological trip order\n"
+                        "- Respond ONLY with the JSON object, no markdown formatting"
+                    )
+                },
+                {
+                    "role": "user",
+                    "content": element_summary
+                }
+            ],
+            max_tokens=300,
+            temperature=0.2,
+            response_format={"type": "json_object"}
+        )
+
+        result_text = response.choices[0].message.content.strip()
+        result = json.loads(result_text)
+        cities = result.get('cities', [])
+
+        logger.info("Resolved %d cities for trip %s: %s", len(cities), trip_id, cities)
+        return jsonify({'success': True, 'cities': cities})
+
+    except Exception as e:
+        logger.error("City resolution error for trip %s: %s", trip_id, e)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 @app.route('/api/monitoring/prices', methods=['GET'])
 def get_price_monitoring():
     """Get price monitoring data"""
