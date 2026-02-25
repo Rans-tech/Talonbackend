@@ -2475,6 +2475,96 @@ Keep it concise but vivid - 3-4 sentences max."""
         import traceback
         traceback.print_exc()
         return jsonify({'success': False, 'error': str(e)}), 500
+
+# Trip Highlights for Shared Trips
+# @route: GET /api/trips/shared/:token/highlights
+@app.route('/api/trips/shared/<share_token>/highlights', methods=['GET', 'OPTIONS'])
+def get_shared_trip_highlights(share_token):
+    """Generate AI-curated trip highlights for sharing with friends/family"""
+    if request.method == 'OPTIONS':
+        return '', 200
+
+    try:
+        print(f"[HIGHLIGHTS] Starting for token: {share_token[:10]}...")
+
+        # Get share
+        share_response = db_client.client.table('trip_shares').select('*').eq('share_token', share_token).eq('is_active', True).single().execute()
+        if not share_response.data:
+            return jsonify({'success': False, 'error': 'Share not found'}), 404
+
+        trip_id = share_response.data['trip_id']
+
+        # Get trip
+        trip_response = db_client.client.table('trips').select('*').eq('id', trip_id).single().execute()
+        if not trip_response.data:
+            return jsonify({'success': False, 'error': 'Trip not found'}), 404
+
+        trip = trip_response.data
+
+        # Get elements
+        elements_response = db_client.client.table('trip_elements').select('*').eq('trip_id', trip_id).execute()
+        elements = elements_response.data or []
+
+        if not elements:
+            return jsonify({'success': True, 'highlights': []})
+
+        # Build element summaries for prompt (no sensitive data)
+        element_summaries = []
+        for el in elements:
+            el_type = el.get('type', 'other')
+            title = el.get('title', '')
+            element_summaries.append(f"- [{el_type}] {title}")
+
+        elements_text = '\n'.join(element_summaries)
+        destination = trip.get('destination', 'the destination')
+        trip_name = trip.get('name', 'Trip')
+
+        from openai import OpenAI
+        client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+
+        prompt = f"""Generate 4-6 curated trip highlights for sharing with friends and family.
+
+TRIP: {trip_name}
+DESTINATION: {destination}
+ITINERARY ELEMENTS:
+{elements_text}
+
+REQUIREMENTS:
+1. Each highlight should be a warm, exciting bullet point about an activity, dining experience, or special moment
+2. DO NOT include any prices, costs, confirmation numbers, or street addresses
+3. Focus on experiences: adventures, dining, scenic spots, accommodations (by name only)
+4. Each highlight needs an emoji and a short engaging description (under 15 words)
+5. Return exactly this JSON format: {{"highlights": [{{"emoji": "...", "text": "..."}}, ...]}}
+
+TONE: Exciting, warm, shareable — like highlights you'd text a friend."""
+
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": "You generate curated trip highlights as JSON. Never include prices, confirmation numbers, or full addresses."},
+                {"role": "user", "content": prompt}
+            ],
+            response_format={"type": "json_object"},
+            temperature=0.7,
+            max_tokens=400
+        )
+
+        import json
+        result = json.loads(response.choices[0].message.content)
+        highlights = result.get('highlights', [])
+        print(f"[HIGHLIGHTS] Generated {len(highlights)} highlights")
+
+        return jsonify({
+            'success': True,
+            'highlights': highlights
+        })
+
+    except Exception as e:
+        print(f"[HIGHLIGHTS] ERROR: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 # Learning Loop API Endpoints
 
 # @route: POST /api/insights/feedback
