@@ -2565,6 +2565,264 @@ TONE: Exciting, warm, shareable — like highlights you'd text a friend."""
         traceback.print_exc()
         return jsonify({'success': False, 'error': str(e)}), 500
 
+# ==================================================================
+# Push Notification Endpoints
+# ==================================================================
+
+# @route: POST /api/push/subscribe
+@app.route('/api/push/subscribe', methods=['POST', 'OPTIONS'])
+def push_subscribe():
+    """Register a push notification subscription"""
+    if request.method == 'OPTIONS':
+        return '', 200
+    try:
+        data = request.json
+        user_id = data.get('user_id')
+        endpoint = data.get('endpoint')
+        p256dh = data.get('p256dh')
+        auth_key = data.get('auth')
+
+        if not all([user_id, endpoint, p256dh, auth_key]):
+            return jsonify({'success': False, 'error': 'Missing required fields'}), 400
+
+        db_client.client.table('push_subscriptions').upsert({
+            'user_id': user_id,
+            'endpoint': endpoint,
+            'p256dh': p256dh,
+            'auth': auth_key,
+            'user_agent': data.get('user_agent', ''),
+        }, on_conflict='user_id,endpoint').execute()
+
+        return jsonify({'success': True})
+    except Exception as e:
+        print(f"Push subscribe error: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# @route: POST /api/push/unsubscribe
+@app.route('/api/push/unsubscribe', methods=['POST', 'OPTIONS'])
+def push_unsubscribe():
+    """Remove a push notification subscription"""
+    if request.method == 'OPTIONS':
+        return '', 200
+    try:
+        data = request.json
+        user_id = data.get('user_id')
+        endpoint = data.get('endpoint')
+
+        if not user_id or not endpoint:
+            return jsonify({'success': False, 'error': 'Missing user_id or endpoint'}), 400
+
+        db_client.client.table('push_subscriptions').delete().eq(
+            'user_id', user_id
+        ).eq('endpoint', endpoint).execute()
+
+        return jsonify({'success': True})
+    except Exception as e:
+        print(f"Push unsubscribe error: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# @route: POST /api/cron/tomorrow-preview
+@app.route('/api/cron/tomorrow-preview', methods=['POST', 'OPTIONS'])
+def cron_tomorrow_preview():
+    """
+    Cron-triggered: sends 'Tomorrow's Preview' push notifications
+    to trip owners who have activities scheduled for tomorrow.
+    Protected by CRON_SECRET header.
+    """
+    if request.method == 'OPTIONS':
+        return '', 200
+
+    # Authenticate cron request
+    cron_secret = request.headers.get('X-Cron-Secret')
+    expected_secret = os.getenv('CRON_SECRET')
+    if not expected_secret or cron_secret != expected_secret:
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 401
+
+    from datetime import datetime, timedelta
+    from pywebpush import webpush, WebPushException
+    import pytz
+
+    vapid_private_key = os.getenv('VAPID_PRIVATE_KEY')
+    vapid_public_key = os.getenv('VAPID_PUBLIC_KEY')
+    vapid_subject = os.getenv('VAPID_SUBJECT', 'mailto:randy.cook@veritasglobal.co')
+    frontend_url = os.getenv('FRONTEND_URL', 'https://effortless-haupia-30fffc.netlify.app')
+
+    if not vapid_private_key or not vapid_public_key:
+        return jsonify({'success': False, 'error': 'VAPID keys not configured'}), 500
+
+    try:
+        now_utc = datetime.now(pytz.utc)
+        default_tz = pytz.timezone('America/Chicago')
+        default_tomorrow = (now_utc.astimezone(default_tz) + timedelta(days=1)).strftime('%Y-%m-%d')
+
+        # Find active trips where tomorrow falls within trip dates
+        trips_response = db_client.client.table('trips').select(
+            'id, user_id, name, destination, start_date, end_date'
+        ).lte('start_date', default_tomorrow).gte(
+            'end_date', default_tomorrow
+        ).eq('archived', False).execute()
+
+        trips = trips_response.data or []
+        if not trips:
+            return jsonify({'success': True, 'message': 'No active trips for tomorrow', 'sent': 0})
+
+        sent_count = 0
+        error_count = 0
+        skipped_count = 0
+
+        # Deduplicate by user_id (a user may have multiple active trips)
+        processed_users = {}
+        for trip in trips:
+            uid = trip['user_id']
+            if uid not in processed_users:
+                processed_users[uid] = []
+            processed_users[uid].append(trip)
+
+        for user_id, user_trips in processed_users.items():
+            # Get user's push subscriptions
+            subs_response = db_client.client.table('push_subscriptions').select(
+                'endpoint, p256dh, auth'
+            ).eq('user_id', user_id).execute()
+
+            subscriptions = subs_response.data or []
+            if not subscriptions:
+                skipped_count += len(user_trips)
+                continue
+
+            # Check user preferences for push opt-in
+            profile_response = db_client.client.table('profiles').select(
+                'preferences'
+            ).eq('id', user_id).single().execute()
+
+            preferences = (profile_response.data or {}).get('preferences') or {}
+            notifications_prefs = preferences.get('notifications', {})
+
+            if notifications_prefs.get('push') is False:
+                skipped_count += len(user_trips)
+                continue
+
+            # Determine user timezone
+            user_tz_name = preferences.get('timezone', 'America/Chicago')
+            try:
+                user_tz = pytz.timezone(user_tz_name)
+            except pytz.exceptions.UnknownTimeZoneError:
+                user_tz = default_tz
+
+            user_tomorrow = (now_utc.astimezone(user_tz) + timedelta(days=1)).strftime('%Y-%m-%d')
+
+            for trip in user_trips:
+                trip_id = trip['id']
+                trip_name = trip.get('name', 'Your Trip')
+                destination = trip.get('destination', '')
+
+                # Fetch tomorrow's elements
+                elements_response = db_client.client.table('trip_elements').select(
+                    'id, type, title, start_datetime, location'
+                ).eq('trip_id', trip_id).gte(
+                    'start_datetime', user_tomorrow + 'T00:00:00'
+                ).lt(
+                    'start_datetime', user_tomorrow + 'T23:59:59'
+                ).neq('status', 'cancelled').order('start_datetime').execute()
+
+                elements = elements_response.data or []
+                if not elements:
+                    skipped_count += 1
+                    continue
+
+                # Build notification payload
+                count = len(elements)
+                first_el = elements[0]
+                first_title = first_el.get('title', 'an activity')
+
+                first_time = ''
+                if first_el.get('start_datetime'):
+                    try:
+                        dt = datetime.fromisoformat(
+                            first_el['start_datetime'].replace('Z', '+00:00')
+                        )
+                        local_dt = dt.astimezone(user_tz)
+                        first_time = f" at {local_dt.strftime('%-I:%M %p')}"
+                    except Exception:
+                        pass
+
+                title = f"Tomorrow in {destination}" if destination else f"Tomorrow: {trip_name}"
+                body = f"{count} {'activity' if count == 1 else 'activities'}"
+                body += f" \u00b7 First up: {first_title}{first_time}"
+
+                import json as json_mod
+                payload = json_mod.dumps({
+                    'title': title,
+                    'body': body,
+                    'icon': '/icons/icon-192.png',
+                    'url': frontend_url,
+                    'tripId': trip_id,
+                    'tag': f'tomorrow-preview-{trip_id}',
+                })
+
+                # Send push to all subscriptions
+                for sub in subscriptions:
+                    try:
+                        webpush(
+                            subscription_info={
+                                'endpoint': sub['endpoint'],
+                                'keys': {
+                                    'p256dh': sub['p256dh'],
+                                    'auth': sub['auth'],
+                                }
+                            },
+                            data=payload,
+                            vapid_private_key=vapid_private_key,
+                            vapid_claims={
+                                'sub': vapid_subject,
+                            }
+                        )
+                        sent_count += 1
+                    except WebPushException as push_err:
+                        error_count += 1
+                        print(f"Push failed for endpoint {sub['endpoint'][:50]}: {push_err}")
+
+                        # Remove dead subscriptions (410 Gone / 404)
+                        if hasattr(push_err, 'response') and push_err.response is not None:
+                            status_code = push_err.response.status_code
+                            if status_code in (404, 410):
+                                db_client.client.table('push_subscriptions').delete().eq(
+                                    'endpoint', sub['endpoint']
+                                ).execute()
+                                print(f"Removed dead subscription: {sub['endpoint'][:50]}")
+
+                # Create in-app notification record
+                try:
+                    db_client.client.table('notifications').insert({
+                        'user_id': user_id,
+                        'trip_id': trip_id,
+                        'type': 'info',
+                        'title': title,
+                        'message': body,
+                        'priority': 'medium',
+                        'read': False,
+                        'dismissed': False,
+                    }).execute()
+                except Exception as notif_err:
+                    print(f"Failed to create in-app notification: {notif_err}")
+
+        print(f"[CRON] Tomorrow preview: sent={sent_count}, skipped={skipped_count}, errors={error_count}, trips={len(trips)}")
+
+        return jsonify({
+            'success': True,
+            'sent': sent_count,
+            'skipped': skipped_count,
+            'errors': error_count,
+            'trips_found': len(trips),
+        })
+
+    except Exception as e:
+        print(f"Cron tomorrow-preview error: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 # Learning Loop API Endpoints
 
 # @route: POST /api/insights/feedback
