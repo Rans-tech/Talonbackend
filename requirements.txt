@@ -10,3 +10,4 @@ stripe==7.4.0
 resend==0.8.0
 pymupdf
 pywebpush==2.0.0
+pytz==2024.1
