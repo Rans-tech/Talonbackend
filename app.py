@@ -2777,6 +2777,7 @@ def cron_tomorrow_preview():
                             vapid_private_key=vapid_private_key,
                             vapid_claims={
                                 'sub': vapid_subject,
+                                'aud': '/'.join(sub['endpoint'].split('/')[:3]),
                             }
                         )
                         sent_count += 1
