@@ -2740,11 +2740,13 @@ def cron_tomorrow_preview():
                 first_time = ''
                 if first_el.get('start_datetime'):
                     try:
-                        dt = datetime.fromisoformat(
-                            first_el['start_datetime'].replace('Z', '+00:00')
-                        )
-                        local_dt = dt.astimezone(user_tz)
-                        first_time = f" at {local_dt.strftime('%-I:%M %p')}"
+                        # Datetimes are stored as local time (no tz offset)
+                        raw = str(first_el['start_datetime']).replace('Z', '').replace('+00:00', '')
+                        dt = datetime.fromisoformat(raw)
+                        hour = dt.hour % 12 or 12
+                        minute = dt.strftime('%M')
+                        ampm = 'AM' if dt.hour < 12 else 'PM'
+                        first_time = f" at {hour}:{minute} {ampm}"
                     except Exception:
                         pass
 
