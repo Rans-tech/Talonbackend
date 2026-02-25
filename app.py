@@ -2671,6 +2671,7 @@ def cron_tomorrow_preview():
         sent_count = 0
         error_count = 0
         skipped_count = 0
+        error_details = []
 
         # Deduplicate by user_id (a user may have multiple active trips)
         processed_users = {}
@@ -2781,7 +2782,11 @@ def cron_tomorrow_preview():
                         sent_count += 1
                     except WebPushException as push_err:
                         error_count += 1
-                        print(f"Push failed for endpoint {sub['endpoint'][:50]}: {push_err}")
+                        err_msg = str(push_err)
+                        if hasattr(push_err, 'response') and push_err.response is not None:
+                            err_msg += f" [HTTP {push_err.response.status_code}]: {push_err.response.text[:200]}"
+                        error_details.append(err_msg[:300])
+                        print(f"Push failed for endpoint {sub['endpoint'][:50]}: {err_msg}")
 
                         # Remove dead subscriptions (410 Gone / 404)
                         if hasattr(push_err, 'response') and push_err.response is not None:
@@ -2815,6 +2820,7 @@ def cron_tomorrow_preview():
             'skipped': skipped_count,
             'errors': error_count,
             'trips_found': len(trips),
+            'error_details': error_details[:5],
         })
 
     except Exception as e:
