@@ -41,6 +41,7 @@ class Atlas:
         profile_context: str = "",
         docs_context: str = "",
         existing_draft: str = "",
+        trip_context: str = "",
     ) -> str:
         """Generate or refine a human-readable itinerary.
 
@@ -49,11 +50,12 @@ class Atlas:
             profile_context: Traveler profile block.
             docs_context: Uploaded document text.
             existing_draft: Previous draft to refine.
+            trip_context: Existing trip details when adding to an existing trip.
 
         Returns:
             Markdown itinerary string.
         """
-        system_prompt = self._build_system_prompt(profile_context, docs_context, existing_draft)
+        system_prompt = self._build_system_prompt(profile_context, docs_context, existing_draft, trip_context)
         api_messages = [{"role": "system", "content": system_prompt}] + messages[-20:]
 
         try:
@@ -73,6 +75,7 @@ class Atlas:
         profile_context: str = "",
         docs_context: str = "",
         existing_draft: str = "",
+        trip_context: str = "",
     ) -> str:
         refinement_block = ""
         if existing_draft:
@@ -84,6 +87,18 @@ Produce the FULL UPDATED itinerary (not just the changes).
 {existing_draft}
 """
 
+        add_to_trip_block = ""
+        if trip_context:
+            add_to_trip_block = f"""
+## ADD-TO-TRIP MODE
+You are adding elements to an EXISTING trip. Do NOT create a whole new trip plan.
+The user wants to add specific activities, dining, transport, or other elements to their trip.
+Reference the existing elements below so you know what's already planned.
+Only output the NEW elements/plans to add — not the entire trip.
+
+{trip_context}
+"""
+
         return f"""You are ATLAS, the Master Trip Designer for Travel Raven.
 
 {self._kb}
@@ -91,9 +106,10 @@ Produce the FULL UPDATED itinerary (not just the changes).
 {profile_context}
 {docs_context}
 {refinement_block}
+{add_to_trip_block}
 
 ## Your Task
-Produce a COMPLETE, COMMIT-READY itinerary in human-readable markdown format.
+{"Produce NEW elements to add to the existing trip. Only output the additions, not the full trip." if trip_context else "Produce a COMPLETE, COMMIT-READY itinerary in human-readable markdown format."}
 
 ## Output Format
 Use this exact structure:

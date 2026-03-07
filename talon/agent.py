@@ -76,9 +76,14 @@ class Houston:
         trip_id: Optional[str] = None,
         attachment_text: Optional[str] = None,
         user_profile: Optional[dict] = None,
+        trip_context: Optional[dict] = None,
     ) -> dict:
         """Process a user message. Returns dict with response, commit_ready, draft_summary."""
         conv = self._get_or_create_conversation(conversation_id)
+
+        # Store trip context if provided (existing trip mode)
+        if trip_context and not conv.get("trip_context"):
+            conv["trip_context"] = trip_context
 
         # Append attachment context if present
         user_content = message
@@ -104,11 +109,49 @@ class Houston:
             "conversation_id": conversation_id,
             "commit_ready": conv["commit_ready"],
             "draft_summary": self._draft_summary(conv),
+            "has_trip_context": conv.get("trip_context") is not None,
         }
 
     # ------------------------------------------------------------------
     # Atlas route
     # ------------------------------------------------------------------
+    def _build_trip_context_block(self, conv: dict) -> str:
+        """Build context block describing the existing trip and its elements."""
+        tc = conv.get("trip_context")
+        if not tc:
+            return ""
+
+        block = "\n## Existing Trip Context\n"
+        block += f"**Trip Name:** {tc.get('name', 'Unknown')}\n"
+        block += f"**Dates:** {tc.get('start_date', '?')} to {tc.get('end_date', '?')}\n"
+        block += f"**Destination:** {tc.get('destination', '?')}\n"
+        if tc.get("budget"):
+            block += f"**Budget:** ${tc['budget']}\n"
+
+        elements = tc.get("elements", [])
+        if elements:
+            block += f"\n**Existing Elements ({len(elements)} total):**\n"
+            for el in elements:
+                el_type = el.get("type", "unknown")
+                title = el.get("title", "Untitled")
+                start = el.get("start_datetime", "")
+                location = el.get("location", "")
+                status = el.get("status", "pending")
+                line = f"- [{el_type}] {title}"
+                if start:
+                    line += f" | {start[:10]}"
+                if location:
+                    line += f" | {location}"
+                line += f" ({status})"
+                block += line + "\n"
+        else:
+            block += "\n**No elements yet.**\n"
+
+        block += "\nIMPORTANT: The user is working on THIS existing trip. "
+        block += "Do NOT propose creating a new trip. Plan activities/elements to ADD to this trip. "
+        block += "Reference existing elements when relevant (e.g., 'I see you arrive on July 13').\n"
+        return block
+
     def _route_to_atlas(self, conv: dict, user_profile: Optional[dict] = None) -> str:
         from talon.atlas import Atlas
         atlas = Atlas()
@@ -129,12 +172,16 @@ class Houston:
         if conv["draft_itinerary"]:
             existing_draft = f"\n## Current Draft Itinerary\n{conv['draft_itinerary']}\n"
 
+        # Include existing trip context if in add-to-trip mode
+        trip_context_block = self._build_trip_context_block(conv)
+
         # Call Atlas
         atlas_output = atlas.plan(
             messages=conv["messages"],
             profile_context=profile_block,
             docs_context=docs_block,
             existing_draft=existing_draft,
+            trip_context=trip_context_block,
         )
 
         # Store the draft
@@ -209,13 +256,17 @@ class Houston:
     # General response (non-planning)
     # ------------------------------------------------------------------
     def _general_response(self, conv: dict) -> str:
+        trip_context_block = self._build_trip_context_block(conv)
         system_prompt = f"""You are Houston, the TALON Command Center orchestrator for Travel Raven.
 You are the sole user-facing voice. Be helpful, concise, and specific.
 
 {self._kb_houston}
 
+{trip_context_block}
+
 You help with travel questions, trip coordination, and can route planning requests to Atlas.
-If the user wants to plan a trip, tell them you're routing to Atlas and begin planning."""
+If the user wants to plan a trip, tell them you're routing to Atlas and begin planning.
+If an existing trip is loaded, you can see its elements and help the user add to or refine it."""
 
         messages = [{"role": "system", "content": system_prompt}] + conv["messages"][-20:]
 

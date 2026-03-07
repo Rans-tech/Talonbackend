@@ -125,12 +125,41 @@ def command_center_chat():
             if profile_data:
                 user_profile = profile_data[0] if isinstance(profile_data, list) else profile_data
 
+        # Fetch existing trip context if trip_id provided (add-to-trip mode)
+        trip_context = None
+        if trip_id:
+            try:
+                trip_resp = db_client.client.table('trips').select('*').eq('id', trip_id).execute()
+                if trip_resp.data:
+                    trip_data = trip_resp.data[0]
+                    elements_resp = db_client.client.table('trip_elements').select('*').eq('trip_id', trip_id).order('start_datetime').execute()
+                    elements = elements_resp.data if elements_resp.data else []
+                    trip_context = {
+                        'id': trip_data['id'],
+                        'name': trip_data.get('title', ''),
+                        'destination': trip_data.get('destination', ''),
+                        'start_date': trip_data.get('start_date', ''),
+                        'end_date': trip_data.get('end_date', ''),
+                        'budget': trip_data.get('budget'),
+                        'elements': [{
+                            'type': el.get('type', ''),
+                            'title': el.get('title', ''),
+                            'start_datetime': el.get('start_datetime', ''),
+                            'end_datetime': el.get('end_datetime', ''),
+                            'location': el.get('location', ''),
+                            'status': el.get('status', 'pending'),
+                        } for el in elements],
+                    }
+            except Exception as tc_err:
+                logger.warning("Failed to fetch trip context: %s", tc_err)
+
         result = talon.chat(
             message=message,
             conversation_id=conversation_id,
             trip_id=trip_id,
             attachment_text=attachment_text,
             user_profile=user_profile,
+            trip_context=trip_context,
         )
         return jsonify({'success': True, **result})
     except Exception as e:
@@ -207,6 +236,7 @@ def command_center_commit():
         budget = data.get('budget')
         user_id = data.get('user_id')
         organization_id = data.get('organization_id')
+        existing_trip_id = data.get('existing_trip_id')  # Add-to-trip mode
 
         if not conversation_id:
             return jsonify({'success': False, 'error': 'Missing conversation_id'}), 400
@@ -218,26 +248,38 @@ def command_center_commit():
         if not commit_result.get('success'):
             return jsonify(commit_result), 400
 
-        # Create the trip in Supabase
-        trip_data = {
-            'user_id': user_id,
-            'title': commit_result.get('trip_name', 'My Trip'),
-            'destination': commit_result.get('destination', ''),
-            'start_date': commit_result.get('start_date'),
-            'end_date': commit_result.get('end_date'),
-            'status': 'planned',
-        }
-        if budget:
-            trip_data['budget'] = budget
-        if organization_id:
-            trip_data['organization_id'] = organization_id
+        # Determine trip_id: use existing trip or create new one
+        if existing_trip_id:
+            # ADD-TO-TRIP MODE: insert elements into existing trip
+            trip_id = existing_trip_id
+            trip = None
+            try:
+                trip_resp = db_client.client.table('trips').select('*').eq('id', existing_trip_id).execute()
+                if trip_resp.data:
+                    trip = trip_resp.data[0]
+            except Exception as fetch_err:
+                logger.warning("Failed to fetch existing trip: %s", fetch_err)
+        else:
+            # NEW TRIP MODE: create trip in Supabase
+            trip_data = {
+                'user_id': user_id,
+                'title': commit_result.get('trip_name', 'My Trip'),
+                'destination': commit_result.get('destination', ''),
+                'start_date': commit_result.get('start_date'),
+                'end_date': commit_result.get('end_date'),
+                'status': 'planned',
+            }
+            if budget:
+                trip_data['budget'] = budget
+            if organization_id:
+                trip_data['organization_id'] = organization_id
 
-        trip_response = db_client.client.table('trips').insert(trip_data).execute()
-        if not trip_response.data:
-            return jsonify({'success': False, 'error': 'Failed to create trip'}), 500
+            trip_response = db_client.client.table('trips').insert(trip_data).execute()
+            if not trip_response.data:
+                return jsonify({'success': False, 'error': 'Failed to create trip'}), 500
 
-        trip = trip_response.data[0]
-        trip_id = trip['id']
+            trip = trip_response.data[0]
+            trip_id = trip['id']
 
         # Create all trip_elements
         created_elements = []
@@ -256,6 +298,7 @@ def command_center_commit():
             'trip': trip,
             'elements_created': len(created_elements),
             'elements': created_elements,
+            'mode': 'add_to_trip' if existing_trip_id else 'new_trip',
         })
     except Exception as e:
         logger.error("Command center commit error: %s", e)
